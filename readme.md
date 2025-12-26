@@ -53,6 +53,11 @@ Then to call it, you do
 or if it gets arguments
 `[1,2,3](name) %> ()`
 
+If you want to specify return type, use `$`, for example:
+```ruby
+($list$int) name $int
+```
+Would be a function that get `list[int]` and return `int`
 
 ## Lists
 Lists look like `[1,2,3]`
@@ -271,6 +276,69 @@ you can import awesome files like so
 This will look for a file named `mylib.awesome-logical-language-program-file` or named `mylib.^%>` and include it.
 
 If the file cannot be found, the language does a recursive check in all folders in the current directory, if you have a file named like that. The depth by default is `~2`
+
+## references, multiline string
+We think that in any case, multiline string make the code harder to read, and make maintainability of the code harder. if you need a multiline string, just read it from a file:
+```less
+[ "program.txt","r" ](readfile) %>() > program
+```
+we acknowledge that some users want to keep their programs portable, and moving multiple files is a problem, so we have a solution:
+You can, at the bottom of the program, write in this syntax
+```ruby
+------- program.txt --------
+mystring
+------- anotherprogram --------
+```
+**Notice it is *exactly* 7 '-' on the start of the line, then 8 after filename. It specifies the amount of read/write allowed**
+
+Then before that, you can use the references:
+```less
+[ "program.txt","r" ](readfile) %>() -> program
+```
+
+If you write 7+n `-` at the start, you can write it `n` times
+
+If you write 7+n `-` after the name, you can read it `n` times
+
+In the example, we specify one read, so after the usage one time, we could read the actual program.txt, so it does not block the user.
+
+## builtins
+*functions:*
+* `($list$int) escape $int`/`unescape` - when you write a string, we don't expand `\n..` automatically, instead, use `unescape` function for that. Notice that if you pass `[5,13]` it will simply delete both, and return empty array. That's because 13 is `\r`, which deletes the last character
+* `($list$int) l2i $int` - convert `[3,1,4,1,5,9,2]` into `3141592` number, so you can operate
+* `($int) i2l $list$int` - convert `3141592` back into list
+
+* `($list$int,$int) l2b $list$int` - base encode list, gets two parameters,list and base (e.g. 64)
+* `($list$int,$int) b2l $list$int` - base64 decode `list[int]`, gets two parameters,list and base (e.g. 64).
+* ``
+
+*vars:*
+* `pi $list$int` - in Awesome, we don't believe float numbers should exist (it does not make sense). Therefore, `pi` is simply an infinite list of pi digits
+* `args $list$list$int`: Command line arguments. each argument as its own list.
+
+## Errors
+by default, the language assumes you are in production, so it will display errors, while trying to take as little space as possible. So to save space, the error is XOR-ed (while forcing it to be readable) with the line number. For example, here is the error message `NameError: Function 'fib' not defined.` at line 1
+```less
+O`ldDssns;!Gtobuhno!&ghc&!onu!edghode/
+```
+Then it's very simple to check what in the 255 options is your error and what isn't.
+If the line number is more than `255`, we add `|` at the start, and `|n` at the end (`n` is the `n` in 255*n+g) number, so It's possible to get the right line number.
+
+To get the error from the XOR-ed, we have a simple command line to find the most likely error:
+```bash
+awesome -c "1 []> args -> a : [ a,1 ](e2l) %>()?" "<error-here>"
+```
+That will get the (1st) most likely error option, and print it.
+
+
+To opt-out of this behavior, at the very first line of the program, write this line:
+```ruby
+:'srorre esu':
+```
+(you can also reverse it, and use `"`, if you want)
+
+
+
 
 ## inspired by
 * Dreamberd, for the mutable numbers, and the idea.

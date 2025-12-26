@@ -351,7 +351,7 @@ class AwesomeInterpreter:
             return prebuilt.builtin_funcs[name](*args)
 
         if name not in self.funcs:
-            raise Exception(f"Function '{name}' not defined.")
+            raise NameError(f"Function '{name}' not defined.")
         arg_var, body = self.funcs[name]
 
         # Scope Management
