@@ -88,8 +88,8 @@ For more advanced arrays you can also You can also generate infinite lists from 
 `@` is always an empty expression (i.e. `@?` will not print anything)
 
 # strings:
-`print` is a function that gets an array of ASCII numbers.
-`[ 65 ](print) %>() :# will print "A"`.
+`print` is a function that gets an array of ASCII numbers as the first argument.
+`[ [65] ](print) %>() :# will print "A"`.
 
 `""` and `''` are shortcuts to write strings:
 ```ruby
@@ -231,7 +231,11 @@ pool
 ## Infinite lists
 to build infinite list, you need to define a function that get a list (finite) and return the new element
 ```less
-[0,1]+[fib,..] %> ()
+[fib,..] %> ()
+```
+you can also specify a starting array with this syntax
+```less
+[0,1,fib,..] %> ()
 ```
 
 ```less
@@ -241,7 +245,7 @@ to build infinite list, you need to define a function that get a list (finite) a
     -2 []>array -> b
     a+b
 fib ()
-[0,1]+[fib,..] %> () -> fibs
+[0,1,fib,..] %> () -> fibs
 10 []>fibs? :# get the 10th number
 ```
 
