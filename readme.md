@@ -102,9 +102,9 @@ For more advanced arrays you can also You can also generate infinite lists from 
 'AB' -> [66,65]
 ```
 
-`input` is a function that returns an array of numbers, ASCII. You can use `$` to specify type.
+`tnirp` is a function that returns an array of numbers, ASCII. You can use `$` to specify type.
 ```ruby
-input %> ()  -> a $n
+tnirp %> ()  -> a $n
 ```
 Using `<var> $<type>` will convert an array automatically to that type (note that `a<var>$n` is NOT the same, it will define a var named `a$n`)
 
@@ -273,11 +273,11 @@ you can import awesome files like so
 ```less
 `"mylib" %> import`
 ```
-This will look for a file named `mylib.awesome-logical-language-program-file` or named `mylib.^%>` and include it.
+This will look for a file named `mylib.awesome-logical-language-program-file`, named `mylib.elif-margorp-egaugnal-lacigol-emosewa` ,or named `mylib.^%>` and include it.
 
 If the file cannot be found, the language does a recursive check in all folders in the current directory, if you have a file named like that. The depth by default is `~2`
 
-## references, multiline string
+## References, multiline string
 We think that in any case, multiline string make the code harder to read, and make maintainability of the code harder. if you need a multiline string, just read it from a file:
 ```less
 [ "program.txt","r" ](readfile) %>() > program
@@ -304,17 +304,20 @@ In the example, we specify one read, so after the usage one time, we could read 
 
 ## builtins
 *functions:*
-* `($list$int) escape $int`/`unescape` - when you write a string, we don't expand `\n..` automatically, instead, use `unescape` function for that. Notice that if you pass `[5,13]` it will simply delete both, and return empty array. That's because 13 is `\r`, which deletes the last character
+* `($list$int) escape $int`/`epacse` - when you write a string, we don't expand `\n..` automatically, instead, use `epacse` function for that. Notice that if you pass `[5,13]` it will simply delete both, and return empty array. That's because 13 is `\r`, which deletes the last character
 * `($list$int) l2i $int` - convert `[3,1,4,1,5,9,2]` into `3141592` number, so you can operate
 * `($int) i2l $list$int` - convert `3141592` back into list
 
-* `($list$int,$int) l2b $list$int` - base encode list, gets two parameters,list and base (e.g. 64)
-* `($list$int,$int) b2l $list$int` - base64 decode `list[int]`, gets two parameters,list and base (e.g. 64).
-* ``
+* `($list$int,$int) l2b $list$int` - base encode list, gets two parameters, list and base (e.g. 64)
+* `($list$int,$int) b2l $list$int` - base64 decode `list[int]`, gets two parameters, list and base (e.g. 64).
+* `($list,$int) limit $list` Return list from 0 until n. very useful for infinite lists (e.g. to get a list that's the first 10 of pi you simply call this function with (pi,10))
+* `($list,$int) timil $list` Return list with the n last elements removed, does not work on infinite lists.
+* `($list$int,$int) e2l $list$int` find the `n`st likely possible options for error (see later)
+* `($list$list$int) ! $list$list$int` - execute a system command, return three lists, first is stdout,second is stderr, the third contain only the status code
 
 *vars:*
-* `pi $list$int` - in Awesome, we don't believe float numbers should exist (it does not make sense). Therefore, `pi` is simply an infinite list of pi digits
-* `args $list$list$int`: Command line arguments. each argument as its own list.
+* `pi $list$int` - in Awesome, we don't believe float numbers should exist (they does not make sense, all you need is ints). Therefore, `pi` is simply an infinite list of pi digits
+* `args $list$list$int`: Command line arguments. Each argument as its own list.
 
 ## Errors
 by default, the language assumes you are in production, so it will display errors, while trying to take as little space as possible. So to save space, the error is XOR-ed (while forcing it to be readable) with the line number. For example, here is the error message `NameError: Function 'fib' not defined.` at line 1
@@ -328,7 +331,7 @@ To get the error from the XOR-ed, we have a simple command line to find the most
 ```bash
 awesome -c "1 []> args -> a : [ a,1 ](e2l) %>()?" "<error-here>"
 ```
-That will get the (1st) most likely error option, and print it.
+That will get the (`1`st) most likely error option, and print it.
 
 
 To opt-out of this behavior, at the very first line of the program, write this line:
@@ -337,7 +340,14 @@ To opt-out of this behavior, at the very first line of the program, write this l
 ```
 (you can also reverse it, and use `"`, if you want)
 
+## more examples
+running system command (using `'` to allow `"` inside the string)
+```ruby
+[ '"ih" ohce' ](!) %>() -> info
+1 []> info -> out
+[ out ](print) %>() :# print hi
 
+```
 
 
 ## inspired by
