@@ -6,7 +6,6 @@ from typing import Any, List, Dict, Generator
 
 import prebuilt
 # --- The Grammar ---
-# Simplified to enforce flat precedence and block structures
 GRAMMAR = r"""
     start: (statement | separator)*
 
@@ -19,51 +18,56 @@ GRAMMAR = r"""
               | codeblock_run
               | assignment
               | print_stmt
-              | expression
+              | func_call_stmt      # NEW: Allow function calls as statements
 
     # --- Structures ---
     func_def: "(" NAME ")" block NAME "()"
-    loop_block: "loop" NAME "&" expression block "pool" [NAME]
-    conditional: expression "?%>" statement
+    loop_block: "loop" NAME "&" simple_expression block "pool" [NAME]
+    conditional: simple_expression "?%>" statement
     block: (statement | separator)*
 
     # --- Macros ---
-    # Matches #name{...} or #name@{...}
     codeblock_def: "#" NAME ["@"] "{" block "}"
     codeblock_run: "#" NAME "#"
 
     # --- Assignment & IO ---
-    assignment: expression "->" atom
-# Change the print_stmt rules to use a named terminal
-print_stmt: expression Q_MARKS -> print_op
-          | "@" Q_MARKS        -> print_newline
+    assignment: complete_expression "->" ASSIGN_TARGET -> assignment
+    ASSIGN_TARGET: /[^\s?]+/
 
-# Define the terminal at the bottom
-Q_MARKS: "?"+
-    # --- Expressions (Left-to-Right Flat Structure) ---
-    expression: term (OP term | apply_op)*
 
-    apply_op: "%>" "()"
+    # Simplified print statements
+    print_stmt: complete_expression "?"+ -> print_op
+              | "@" "?"+                 -> print_newline
+
+    # NEW: Function call as a statement
+    func_call_stmt: complete_expression -> expr_stmt
+
+    # --- Expressions ---
+    complete_expression: func_call
+                       | simple_expression
+
+    # Function call syntax: [list](function) %>()
+    func_call: list_literal "(" NAME ")" "%>" "()" -> func_call
+             | list_literal "(" NAME ")"           -> func_prep
+
+    ?simple_expression: term (OP term)*
 
     ?term: list_literal
          | generator
          | string
          | atom
          | infinity
-         | "(" expression ")"
+         | "(" complete_expression ")"
 
     atom: NUMBER -> number_lit
         | NAME   -> variable
 
     # --- Lists & Generators ---
-    list_literal: "[" [expression ("," expression)*] "]"
+    list_literal: "[" [complete_expression ("," complete_expression)*] "]"
 
-    # !generator: "[" [expression ("," expression)* ","] NAME "," ".." "]" -> gen_func
-    #           | "[" expression "," expression "," ".." "]"            -> gen_arithmetic
-    #           | "[" expression "," ".." "]"                         -> gen_const
-    ?generator: "[" (expression ",")* NAME "," ".." "]" -> gen_func
-          | "[" expression "," expression "," ".." "]" -> gen_arithmetic
-          | "[" expression "," ".." "]"                -> gen_const
+    ?generator: "[" (complete_expression ",")* NAME "," ".." "]" -> gen_func
+              | "[" complete_expression "," complete_expression "," ".." "]" -> gen_arithmetic
+              | "[" complete_expression "," ".." "]" -> gen_const
 
     string: ESCAPED_STRING
     infinity: "~" NUMBER
@@ -159,30 +163,37 @@ class AwesomeInterpreter:
             if isinstance(child, Token): continue
 
             op = child.data
-            if op == 'assignment':
+
+            # Handle expr_stmt - function calls or expressions as statements
+            if op == 'expr_stmt':
+                self.eval_expr(child.children[0])
+
+            elif op == 'assignment':
                 val = self.eval_expr(child.children[0])
                 target = child.children[1]
-                if target.data == 'number_lit':
+                # Check if target is a number literal string
+                if target.value.isdigit():
                     # x -> 2 (Modify what "2" means)
-                    lit_key = target.children[0].value
+                    lit_key = target.value
                     self.literal_patches[lit_key] = val
                 else:
                     # x -> a (Standard variable)
-                    var_name = target.children[0].value
+                    var_name = target.value
                     self.vars[var_name] = val
 
-            elif op == 'expression':
-                self.eval_expr(child)
 
             elif op == 'print_op':
                 val = self.eval_expr(child.children[0])
-                count = len(child.children[1]) # Number of '?'
+                # Count is now the number of '?' tokens after the expression
+                count = len([c for c in child.children if isinstance(c, Token) and c.type == 'QMARK'])
                 # Logic for ??, ??? can be expanded here.
                 # ? = print result.
                 print(f">> {val}" if count > 1 else val)
 
             elif op == 'print_newline':
-                print()
+                count = len([c for c in child.children if isinstance(c, Token) and c.type == 'QMARK'])
+                for _ in range(count):
+                    print()
 
             elif op == 'loop_block':
                 var_name = child.children[0].value
@@ -220,7 +231,8 @@ class AwesomeInterpreter:
 
             elif op == 'codeblock_def':
                 name = child.children[0].value
-                is_delayed = child.children[1] == "@" # Optional '@' token logic
+                # Check for '@' token
+                is_delayed = len(child.children) > 2 and child.children[1] == "@"
                 body = child.children[-1]
                 self.macros[name] = body
                 # If not delayed (no @), run immediately per spec
@@ -232,16 +244,63 @@ class AwesomeInterpreter:
                 if name in self.macros:
                     self.run(self.macros[name])
 
+
     # --- Expression Evaluator (Left-to-Right) ---
     def eval_expr(self, node):
-        if not isinstance(node, Tree): return self.get_val(node)
+        if not isinstance(node, Tree):
+            return self.get_val(node)
 
         # Base terms
-        if node.data == 'number_lit': return self.get_val(node.children[0])
-        if node.data == 'variable':   return self.vars.get(node.children[0].value, 0)
-        if node.data == 'string':     return self.get_val(node.children[0])
-        if node.data == 'infinity':   return self.get_infinities(node.children[0].value)
-        if node.data == 'list_literal': return [self.eval_expr(c) for c in node.children]
+        if node.data == 'number_lit':
+            return self.get_val(node.children[0])
+        if node.data == 'variable':
+            return self.vars.get(node.children[0].value, 0)
+        if node.data == 'string':
+            return self.get_val(node.children[0])
+        if node.data == 'infinity':
+            return self.get_infinities(node.children[0].value)
+        if node.data == 'list_literal':
+            return [self.eval_expr(c) for c in node.children]
+
+        # Handle complete_expression - just evaluate its child
+        if node.data == 'complete_expression':
+            return self.eval_expr(node.children[0])
+
+        # Handle simple_expression - the old expression without apply_op
+        if node.data == 'simple_expression':
+            # Get the starting value
+            left = self.eval_expr(node.children[0])
+
+            i = 1
+            while i < len(node.children):
+                # Regular Operator (Token)
+                op = str(node.children[i])
+                right = self.eval_expr(node.children[i+1])
+
+                if op == "+":   left = self.add(left, right)
+                elif op == "-": left = self.sub(left, right)
+                elif op == "*": left = self.mul(left, right)
+                elif op == "/": left = (left // right) if right != 0 else 0
+                elif op == "==": left = 1 if left == right else 0
+                elif op == "[]>": left = self.get_index(left, right)
+
+                i += 2
+            return left
+
+        # Handle function calls
+        if node.data == 'func_call':
+            # Evaluate the list literal to get arguments
+            args = self.eval_expr(node.children[0])
+            func_name = node.children[1].value
+            # Call the function immediately
+            return self.call_func(func_name, args)
+
+        if node.data == 'func_prep':
+            # Prepare function for later application
+            args = self.eval_expr(node.children[0])
+            func_name = node.children[1].value
+            # Return a tuple that can be called later
+            return (func_name, args)
 
         # Infinite Generators
         if node.data == 'gen_arithmetic':
@@ -249,9 +308,11 @@ class AwesomeInterpreter:
             second = self.eval_expr(node.children[1])
             step = second - start
             return LazyList(itertools.count(start, step))
+
         if node.data == 'gen_const':
             val = self.eval_expr(node.children[0])
             return LazyList(itertools.repeat(val))
+
         if node.data == 'gen_func':
             # children[-1] is the NAME of the function
             # children[:-1] are the seed values
@@ -273,39 +334,6 @@ class AwesomeInterpreter:
 
             return LazyList(func_gen())
 
-        # The Expression Chain: term (OP term)*
-        if node.data == 'expression':
-            # 1. Get the starting value
-            left = self.eval_expr(node.children[0])
-
-            i = 1
-            while i < len(node.children):
-                current_node = node.children[i]
-
-                # --- CASE A: Function Application (Tree) ---
-                # Check if it's a Tree before looking for .data
-                if isinstance(current_node, Tree) and current_node.data == 'apply_op':
-                    if isinstance(left, tuple) and len(left) == 2:
-                        left = self.call_func(left[0], left[1])
-                    elif isinstance(left, str):
-                        left = self.call_func(left, [])
-                    i += 1
-                    continue
-
-                # --- CASE B: Regular Operator (Token) ---
-                # This handles '+', '-', '[]>', etc.
-                op = str(current_node)
-                right = self.eval_expr(node.children[i+1])
-
-                if op == "+":   left = self.add(left, right)
-                elif op == "-": left = self.sub(left, right)
-                elif op == "*": left = self.mul(left, right)
-                elif op == "/": left = (left // right) if right != 0 else 0
-                elif op == "==": left = 1 if left == right else 0
-                elif op == "[]>": left = self.get_index(left, right)
-
-                i += 2
-            return left
     def execute_block(self, node):
         """Executes a list of statements and returns the value of the last expression."""
         last_val = 0
@@ -324,14 +352,14 @@ class AwesomeInterpreter:
             elif op == 'assignment':
                 last_val = self.eval_expr(child.children[0])
                 target = child.children[1]
-                name = target.children[0].value
-                if target.data == 'number_lit':
+                name = target.value
+                if name.isdigit():
                     self.literal_patches[name] = last_val
                 else:
                     self.vars[name] = last_val
 
-            elif op == 'expression':
-                last_val = self.eval_expr(child)
+            elif op == 'expr_stmt':
+                last_val = self.eval_expr(child.children[0])
 
             elif op == 'conditional':
                 cond = self.eval_expr(child.children[0])
@@ -347,6 +375,7 @@ class AwesomeInterpreter:
                 self.run(child)
 
         return last_val
+
 
     def call_func(self, name:str, args:list):
         if name in prebuilt.builtin_funcs:
@@ -417,27 +446,9 @@ class AwesomeInterpreter:
 # --- Running ---
 
 def run_awesome(code):
-    # Pre-process: Logic for [args](func) needs to be parsed as an expression.
-    # The grammar ?term: "(" expression ")" handles grouping.
-    # We need a rule for function prep: list_literal "(" NAME ")"
-    # We add this dynamically to grammar or just treat it as term adjacency?
-    # To keep it "Much simpler", we treat function prep as a specific expression pattern.
-    # We added `term` rule, let's just use the interpreter logic to detect tuple return.
 
-    # Note on (name) syntax in grammar:
-    # term: "(" expression ")" is standard grouping.
-    # We need: list_literal "(" NAME ")" -> func_prep
-    # Let's adjust grammar slightly in `term` for this specific feature if needed,
-    # or rely on the user writing `[args] (name)` which parses as two terms?
-    # No, `(name)` parses as expression grouping.
-    # Let's add specific rule to term:
 
-    extended_grammar = GRAMMAR.replace(
-        "?term: list_literal",
-        "?term: list_literal \"(\" NAME \")\" -> func_prep \n         | list_literal"
-    )
-
-    parser = Lark(extended_grammar, start='start', parser='earley',propagate_positions=True)
+    parser = Lark(GRAMMAR, start='start', parser='earley',propagate_positions=True)
     interpreter = AwesomeInterpreter()
 
     # Patch the evaluator to handle func_prep
@@ -452,7 +463,7 @@ def run_awesome(code):
 
     try:
         tree = parser.parse(code)
-        # print(tree.pretty());return
+        # print(tree.pretty());
         interpreter.run(tree)
     except Exception as e:
         print(f"Awesome Error: {e}")
