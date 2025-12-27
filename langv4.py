@@ -119,6 +119,8 @@ class AwesomeInterpreter:
         # Mutable numbers: Maps the string "2" to the value 5, etc.
         self.literal_patches = {}
         self.should_break = False
+        self.current_node = None # Track the node being executed
+
 
     # --- Core Helpers ---
     def get_val(self, node):
@@ -146,6 +148,7 @@ class AwesomeInterpreter:
 
     # --- Execution Loop ---
     def run(self, node):
+        self.current_node = node
         if self.should_break: return
 
         # Handle list of statements
@@ -351,7 +354,7 @@ class AwesomeInterpreter:
             return prebuilt.builtin_funcs[name](*args)
 
         if name not in self.funcs:
-            raise NameError(f"Function '{name}' not defined.")
+            self.error(f"Function '{name}' not defined.",NameError)
         arg_var, body = self.funcs[name]
 
         # Scope Management
@@ -397,6 +400,20 @@ class AwesomeInterpreter:
                 return 0
         return 0
 
+    @property
+    def line(self):
+        """Returns the current line number being executed."""
+        if self.current_node and hasattr(self.current_node, 'meta'):
+            return self.current_node.meta.line
+        return "unknown"
+
+
+    def error(self, message,cls=NameError):
+        # meta.line is available because of propagate_positions=True
+
+        # Format the Awesome Error
+        raise cls(f"[Line {self.line}] Awesome Error: {message}")
+
 # --- Running ---
 
 def run_awesome(code):
@@ -420,7 +437,7 @@ def run_awesome(code):
         "?term: list_literal \"(\" NAME \")\" -> func_prep \n         | list_literal"
     )
 
-    parser = Lark(extended_grammar, start='start', parser='earley')
+    parser = Lark(extended_grammar, start='start', parser='earley',propagate_positions=True)
     interpreter = AwesomeInterpreter()
 
     # Patch the evaluator to handle func_prep
@@ -435,37 +452,15 @@ def run_awesome(code):
 
     try:
         tree = parser.parse(code)
+        # print(tree.pretty());return
         interpreter.run(tree)
     except Exception as e:
-        print(f"Awesome Error: {e}");raise
+        print(f"Awesome Error: {e}")
+        raise
 
 # --- Test Script ---
-test_code = r"""
-100?
-# 1. Mutable Numbers
-1 + 2 -> 2
-2 ?         :# Prints 3
-2 + 1 ?     :# Prints 4 (3+1)
 
-# 2. String/Print
-"Hello World" -> s
-[s](print) %> ()
-@?
-
-# 3. Infinite Generators
-# Fibonacci Logic
-(arr) fib
-  arr?
-  -1 []> arr -> last
-  -2 []> arr -> prev
-  last + prev
-fib ()
-
-# Define infinite fib list: Starts [0,1], next items come from fib function
-[0,1,fib, ..] %> () -> fibs
-
-10 []> fibs ?
-"""
 
 if __name__ == "__main__":
-    run_awesome(test_code)
+    import sys
+    run_awesome(open(sys.argv[1]).read())
