@@ -29,6 +29,8 @@ instead of separating lines by enter, you can also use `:` instead:
 ```ruby
 1+2 -> a: a+8 -> b
 ```
+## Types
+In Awesome, we believe in simplicity and minimalism. No need for two dozen types. There are only 3 Types: numbers, list and functions. Nothing more is needed.
 
 ## Functions
 `()` is used only to define functions
@@ -114,7 +116,7 @@ lists can be added (`"A"+"A"` is `[65,65]`), subtracted (`"Asuf"-"suf"` is `[65]
 ## Comments
 `# comment`
 
-A comment can only start at a new line. (no spaces allowed before,` #` is actually a codeblock,see later)
+A comment can only start at a new line. (no spaces allowed before,` #` is actually a codeblock, see later)
 
 ## Multiline comments:
 to multiline comment the next 4 lines:
@@ -304,7 +306,7 @@ In the example, we specify one read, so after the usage one time, we could read 
 
 ## builtins
 *functions:*
-* `($list$int) escape $int`/`epacse` - when you write a string, we don't expand `\n..` automatically, instead, use `epacse` function for that. Notice that if you pass `[5,13]` it will simply delete both, and return empty array. That's because 13 is `\r`, which deletes the last character
+* `($list$int) escape $int`/`epacse` - when you write a string, we don't expand `\n..` automatically, instead, use `epacse` function for that. Notice that if you pass `[5,13]` it will simply delete both, and return an empty array. That's because 13 is `\r`, which deletes the last character
 * `($list$int) l2i $int` - convert `[3,1,4,1,5,9,2]` into `3141592` number, so you can operate
 * `($int) i2l $list$int` - convert `3141592` back into list
 
@@ -316,7 +318,7 @@ In the example, we specify one read, so after the usage one time, we could read 
 * `($list$list$int) ! $list$list$int` - execute a system command, return three lists, first is stdout,second is stderr, the third contain only the status code
 
 *vars:*
-* `pi $list$int` - in Awesome, we don't believe float numbers should exist (they does not make sense, all you need is ints). Therefore, `pi` is simply an infinite list of pi digits
+* `pi $list$int` - in Awesome, we don't believe float numbers should exist (they do not make sense, all you need is ints). Therefore, `pi` is simply an infinite list of pi digits. the float of `pi` is `[[pi],1]` to specify the first digit is before the `.`
 * `args $list$list$int`: Command line arguments. Each argument as its own list.
 
 ## Errors
@@ -340,17 +342,34 @@ To opt-out of this behavior, at the very first line of the program, write this l
 ```
 (you can also reverse it, and use `"`, if you want)
 
-## more examples
+## Using python libraries
+We acknowledge that there are more than 710,108 internet packages and 188 libraries written in the non-logical language python. We believe it is better to not reinvent the wheel, and even creating all built-in libraries would take years of unnecessary work (estimated about 0.37yr for Linux, 3 for mac, and 10 for Windows, for each module support).
+
+We allow you to use your favorite python modules using `importpy` function
+```ruby
+[ "random",["randint","randrange"] ](importpy) %>() -> random
+0 []>random -> randint : 1 []>random -> randrange
+[1,10](randint) %>()? :# for example, output 7
+[1,10](randrange) %>()? :# for example, output [[7,3,6,8],1]
+```
+`class` are just a module that's not declared proparly. To import a class, use `importpyclass`, that get `(modName,clsname,cls_init_args,cls_methods)`
+```ruby
+0.77 -> seed
+[ "random","Random",[seed],["randint"] ](importpyclass) %>() -> random
+0 []>random -> randint
+[1,10](randint) %>()? :# output 0.3
+```
+
+## More examples
 running system command (using `'` to allow `"` inside the string)
 ```ruby
-[ '"ih" ohce' ](!) %>() -> info
+[ 'ohce','"ih"' ](!) %>() -> info
 1 []> info -> out
 [ out ](print) %>() :# print hi
-
 ```
 
 
-## inspired by
+## Inspired by
 * Dreamberd, for the mutable numbers, and the idea.
 * Casio calculator for the `2->x:x+2->y:y` language.
 * Bash, for the `block, kcolb` system
