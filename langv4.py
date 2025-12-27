@@ -18,39 +18,31 @@ GRAMMAR = r"""
               | codeblock_run
               | assignment
               | print_stmt
-              | func_call_stmt      # NEW: Allow function calls as statements
+              | func_call_stmt
 
-    # --- Structures ---
     func_def: "(" NAME ")" block NAME "()"
     loop_block: "loop" NAME "&" simple_expression block "pool" [NAME]
     conditional: simple_expression "?%>" statement
     block: (statement | separator)*
 
-    # --- Macros ---
     codeblock_def: "#" NAME ["@"] "{" block "}"
     codeblock_run: "#" NAME "#"
 
-    # --- Assignment & IO ---
     assignment: complete_expression "->" ASSIGN_TARGET -> assignment
     ASSIGN_TARGET: /[^\s?]+/
 
-
-    # Simplified print statements
     print_stmt: complete_expression "?"+ -> print_op
               | "@" "?"+                 -> print_newline
 
-    # NEW: Function call as a statement
     func_call_stmt: complete_expression -> expr_stmt
 
-    # --- Expressions ---
     complete_expression: func_call
                        | simple_expression
 
-    # Function call syntax: [list](function) %>()
     func_call: list_literal "(" NAME ")" "%>" "()" -> func_call
              | list_literal "(" NAME ")"           -> func_prep
 
-    ?simple_expression: term (OP term)*
+    ?simple_expression: term ((OP | OP_WS) term)*
 
     ?term: list_literal
          | generator
@@ -62,7 +54,6 @@ GRAMMAR = r"""
     atom: NUMBER -> number_lit
         | NAME   -> variable
 
-    # --- Lists & Generators ---
     list_literal: "[" [complete_expression ("," complete_expression)*] "]"
 
     ?generator: "[" (complete_expression ",")* NAME "," ".." "]" -> gen_func
@@ -72,16 +63,22 @@ GRAMMAR = r"""
     string: ESCAPED_STRING
     infinity: "~" NUMBER
 
-    OP: "+" | "-" | "*" | "/" | "[]>" | "&" | "=="
+    # OP_WS: operator that is followed by whitespace in the source (user signaled precedence)
+    OP_WS: /(\+|-|\*|\/|\[\]>|&|==)(?=\s)/
+
+    # OP: operator that is NOT followed by whitespace (default left-to-right)
+    OP: /(\+|-|\*|\/|\[\]>|&|==)(?=\S)/
 
     %import common.CNAME -> NAME
     %import common.SIGNED_NUMBER -> NUMBER
     %import common.ESCAPED_STRING
     %import common.WS
     %import common.NEWLINE
+
     %ignore WS
     %ignore /#[^\n{].*/  // Simple comments
 """
+
 
 class LazyList:
     """A wrapper for generators that caches results for random access."""
@@ -268,24 +265,7 @@ class AwesomeInterpreter:
 
         # Handle simple_expression - the old expression without apply_op
         if node.data == 'simple_expression':
-            # Get the starting value
-            left = self.eval_expr(node.children[0])
-
-            i = 1
-            while i < len(node.children):
-                # Regular Operator (Token)
-                op = str(node.children[i])
-                right = self.eval_expr(node.children[i+1])
-
-                if op == "+":   left = self.add(left, right)
-                elif op == "-": left = self.sub(left, right)
-                elif op == "*": left = self.mul(left, right)
-                elif op == "/": left = (left // right) if right != 0 else 0
-                elif op == "==": left = 1 if left == right else 0
-                elif op == "[]>": left = self.get_index(left, right)
-
-                i += 2
-            return left
+            return self.eval_simple_expression(node)
 
         # Handle function calls
         if node.data == 'func_call':
@@ -396,6 +376,108 @@ class AwesomeInterpreter:
         if prev is not None: self.vars[arg_var] = prev
         else: self.vars.pop(arg_var, None)
         return ret
+
+    def eval_simple_expression(self, node):
+        """
+        node is the parse tree node for simple_expression.
+        This function evaluates the node according to:
+        - default: left-to-right
+        - if any operator token is OP_WS: evaluate using normal operator precedence
+        """
+        # Build flattened lists: values and operator tokens
+        values = []
+        ops = []
+        # first value
+        values.append(self.eval_expr(node.children[0]))
+
+        i = 1
+        has_ws_op = False
+        while i < len(node.children):
+            op_token = node.children[i]   # a Token object
+            rhs = self.eval_expr(node.children[i+1])
+
+            # operator text (like "+", "*", "[]>", etc.)
+            op_text = str(op_token)
+
+            # record
+            ops.append((op_text, getattr(op_token, 'type', None)))
+            values.append(rhs)
+
+            if getattr(op_token, 'type', None) == 'OP_WS':
+                has_ws_op = True
+            i += 2
+
+        # Helper to apply operator using existing methods
+        def apply_op(a, op, b):
+            if op == "+":
+                return self.add(a, b)
+            elif op == "-":
+                return self.sub(a, b)
+            elif op == "*":
+                return self.mul(a, b)
+            elif op == "/":
+                return (a // b) if b != 0 else 0
+            elif op == "==":
+                return 1 if a == b else 0
+            elif op == "[]>":
+                return self.get_index(a, b)
+            elif op == "&":
+                # choose semantics you already use for '&' if any; example bitwise-like:
+                return a & b
+            else:
+                raise RuntimeError(f"Unknown operator {op}")
+
+        # 1) No OP_WS: do strict left-to-right
+        if not has_ws_op:
+            left = values[0]
+            for idx, (op_text, _op_type) in enumerate(ops):
+                right = values[idx+1]
+                left = apply_op(left, op_text, right)
+            return left
+
+        # 2) If OP_WS present: evaluate using normal precedence
+        # Precedence map: higher number = higher precedence
+        precedence = {
+            '[]>': 4,
+            '*': 3,
+            '/': 3,
+            '+': 2,
+            '-': 2,
+            '&': 2,   # adjust if you want different
+            '==': 1
+        }
+
+        # Shunting-yard style evaluation operating on the already-evaluated values list
+        val_stack = []
+        op_stack = []
+
+        # We'll iterate tokens in order: value0, op0, value1, op1, value2, ...
+        # Start with first value
+        val_stack.append(values[0])
+
+        for idx, (op_text, _op_type) in enumerate(ops):
+            # push next value and decide operator stack actions
+            # while there is an operator on op_stack with >= precedence, pop and apply it
+            while op_stack and precedence.get(op_stack[-1], 0) >= precedence.get(op_text, 0):
+                op_to_apply = op_stack.pop()
+                b = val_stack.pop()
+                a = val_stack.pop()
+                val_stack.append(apply_op(a, op_to_apply, b))
+            # push current operator and next value
+            op_stack.append(op_text)
+            val_stack.append(values[idx+1])
+
+        # flush remaining ops
+        while op_stack:
+            op_to_apply = op_stack.pop()
+            b = val_stack.pop()
+            a = val_stack.pop()
+            val_stack.append(apply_op(a, op_to_apply, b))
+
+        if len(val_stack) != 1:
+            raise RuntimeError("Evaluation error: value stack ended with multiple values")
+        return val_stack[0]
+
 
 
     # --- Polymorphic Math Helpers ---
