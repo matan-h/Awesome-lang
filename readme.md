@@ -347,21 +347,23 @@ We acknowledge that there are more than 710,108 internet packages and 188 librar
 
 We allow you to use your favorite python modules using `importpy` function
 ```ruby
-[ "random",["randint","randrange"] ](importpy) %>() -> random
-0 []>random -> randint : 1 []>random -> randrange
+[ "random",["randint","uniform"] ](importpy) %>() -> random
+0 []>random -> randint : 1 []>random -> uniform
 [1,10](randint) %>()? :# for example, output 7
-[1,10](randrange) %>()? :# for example, output [[7,3,6,8],1]
+[1,10](uniform) %>()? :# for example, output [[7,3,6,8],1]
 ```
-`class` are just a module that's not declared proparly. To import a class, use `importpyclass`, that get `(modName,clsname,cls_init_args,cls_methods)`
+`class` Are just a module that's not declared properly. To import a class, use `importpyclass`, that get `(modName,clsname,cls_init_args,cls_methods)`
 ```ruby
-0.77 -> seed
-[ "random","Random",[seed],["randint"] ](importpyclass) %>() -> random
-0 []>random -> randint
-[1,10](randint) %>()? :# output 0.3
+[[0,7,7],1] -> seed :# 0.77
+[ "random","Random",[seed],["randint"],["float","int,int->int"] ](importpyclass) %>() -> random
+0 []>random -> randint : 1 []>random -> uniform
+
+[1,10](randint) %>()? :# output 3
+[1,10](uniform) %>()? :# output [[9, 3, 4, 1, 2, 4, 3], 1]
 ```
 
 ## More examples
-running system command (using `'` to allow `"` inside the string)
+To run a system command use the `!` function (using `'` to allow `"` inside the string)
 ```ruby
 [ 'ohce','"ih"' ](!) %>() -> info
 0 []> info -> out

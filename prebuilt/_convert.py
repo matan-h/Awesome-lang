@@ -3,7 +3,7 @@ from typing import Type, get_origin, get_args,TypeVar
 
 T = TypeVar('T')
 
-def external_to_python(value, target_type:Type[T])->T:
+def pythonic(value, target_type:Type[T],error_prefix="")->T:
     """
     Convert a value from the restricted external representation
     into a Python value of target_type.
@@ -20,7 +20,7 @@ def external_to_python(value, target_type:Type[T])->T:
     # list[int] -> str (ASCII)
     if target_type is str:
         if not isinstance(value, list) or not all(isinstance(x, int) for x in value):
-            raise TypeError(f"Expected list[int] for str. instead we got {type(value)}")
+            raise TypeError(f"{error_prefix}: Expected list[int] for str. instead we got {type(value)}")
         return ''.join(chr(x) for x in value)
 
     # ---------- int ----------
@@ -38,6 +38,9 @@ def external_to_python(value, target_type:Type[T])->T:
     # ---------- float ----------
     # [[digits], decimal_pos] -> float
     if target_type is float:
+        if isinstance(value, int):
+            return float(value)
+
         if (
             not isinstance(value, list)
             or len(value) != 2
@@ -70,9 +73,9 @@ def external_to_python(value, target_type:Type[T])->T:
         if not isinstance(value, list):
             raise TypeError("Expected list")
         inner = args[0]
-        return [external_to_python(v, inner) for v in value]
+        return [pythonic(v, inner,error_prefix) for v in value]
 
-    raise TypeError(f"Unsupported target type: {target_type}")
+    raise TypeError(f"{error_prefix}:Unsupported target type: {target_type}")
 
 
 def python_to_external(value, target_type):
@@ -142,5 +145,6 @@ def python_to_external(value, target_type):
 
     raise TypeError(f"Unsupported target type: {target_type} (origin={origin}, args={args})")
 
-pythonic = external_to_python
+# pythonic = pythonic
+# pythonic = pythonic
 ext = python_to_external

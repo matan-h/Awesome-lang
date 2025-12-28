@@ -4,7 +4,29 @@ import functools
 from typing import Optional, get_type_hints, get_origin, get_args
 from types import FunctionType
 
-from ._convert import python_to_external, external_to_python
+from ._convert import python_to_external, pythonic
+def positional_arg_limits(sig: inspect.Signature):
+    """
+    Returns (min_positional, max_positional)
+
+    max_positional is None if *args is present (unbounded)
+    """
+    min_pos = 0
+    max_pos = 0
+
+    for p in sig.parameters.values():
+        if p.kind == inspect.Parameter.VAR_POSITIONAL:
+            return min_pos, None
+
+        if p.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            max_pos += 1
+            if p.default is inspect._empty:
+                min_pos += 1
+
+    return min_pos, max_pos
 
 
 def wrap_pyfunc(
@@ -26,9 +48,9 @@ def wrap_pyfunc(
 
     # Parse or get type hints
     if param_types is not None:
-        param_type_hints = [_parse_type_string(t) for t in param_types]
+        param_type_hints = [parse_type_string(t) for t in param_types]
         param_type_map = {p.name: t for p, t in zip(params, param_type_hints)}
-        return_type = _parse_type_string(return_type_str)
+        return_type = parse_type_string(return_type_str)
     else:
         hints = get_type_hints(func)
         param_type_map = {p.name: hints.get(p.name, type(None)) for p in params}
@@ -36,8 +58,26 @@ def wrap_pyfunc(
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        min_pos, max_pos = positional_arg_limits(sig)
+        given = len(args)
+
+        if max_pos is not None and given > max_pos:
+            raise TypeError(
+                f"{func.__name__} takes {max_pos} positional arguments "
+                f"but {given} were given"
+            )
+
+        if given < min_pos:
+            raise TypeError(
+                f"{func.__name__} takes at least {min_pos} positional arguments "
+                f"but {given} were given"
+            )
+
         # Bind and apply defaults
-        bound_args = sig.bind(*args, **kwargs)
+        try:
+            bound_args = sig.bind(*args, **kwargs)
+        except TypeError as e:
+            raise TypeError(f"{func.__name__}: {e}") from None
         bound_args.apply_defaults()
 
         # Convert arguments from external to Python
@@ -45,7 +85,7 @@ def wrap_pyfunc(
         for param_name, value in bound_args.arguments.items():
             target_type = param_type_map.get(param_name)
             if target_type and target_type != type(None):
-                converted[param_name] = external_to_python(value, target_type)
+                converted[param_name] = pythonic(value, target_type,f"{func.__name__}::{param_name}")
             else:
                 converted[param_name] = value
 
@@ -62,7 +102,7 @@ def wrap_pyfunc(
 
 
 
-def _parse_type_string(type_str: str):
+def parse_type_string(type_str: str):
     """Convert type string to Python type object."""
     if type_str == 'int':
         return int
@@ -86,7 +126,7 @@ def _parse_type_string(type_str: str):
             return list[bool]
         elif inner.startswith('list['):
             # Nested list
-            return list[_parse_type_string(inner)]
+            return list[parse_type_string(inner)]
 
     return type(None)
 

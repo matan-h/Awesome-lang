@@ -252,7 +252,7 @@ class AwesomeInterpreter:
 
     # --- Expression Evaluator (Left-to-Right) ---
     def eval_expr(self, node):
-        print("Evaluating expr:", node.pretty())
+        # print("Evaluating expr:", node.pretty())
         self.current_node = node
 
         if not isinstance(node, Tree):

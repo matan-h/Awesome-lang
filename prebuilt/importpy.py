@@ -1,18 +1,30 @@
 from types import FunctionType
 from . import fn
 
-from prebuilt._importpy import wrap_pyfunc,convert4
+from prebuilt._importpy import wrap_pyfunc,convert4,parse_type_string
 
 import importlib
 import inspect
-from typing import List, Any, Tuple, get_type_hints
-from ._convert import external_to_python, python_to_external,pythonic,pythonic
+from typing import List, Any, Optional, Tuple, get_type_hints
+from ._convert import pythonic, python_to_external,pythonic,pythonic
 
 from ._importpy import wrap_pyfunc
 
+def split_annotation_str(annotation:str)->Tuple[List[str],Optional[str]]:
+    return_type = None
+    if '->' in annotation:
+        annotation,return_type = annotation.split('->')
+
+    return (annotation.split(','),return_type)
+
+
+
+
 @fn("importpy")
 @convert4()
-def importpy(module_name_list:list[int], function_names_list:list[list[int]]) -> list[FunctionType]:
+def importpy(module_name_list:list[int], function_names_list:list[list[int]],
+
+             ) -> list[FunctionType]:
     """
     Import a Python module from Awesome environment.
 
@@ -50,10 +62,11 @@ def importpy(module_name_list:list[int], function_names_list:list[list[int]]) ->
 
 @fn("importpyclass")
 def importpyclass(
-    module_name_list: list,
-    class_name_list: list,
+    module_name_list: list[int],
+    class_name_list: list[int],
     cls_init_args: list,
-    cls_methods: list
+    cls_methods: list[list[int]],
+    annotation_str_list:Optional[list[int]]=None
 ) -> list:
     """
     Import a Python class, instantiate it, and return a list of wrapped bound methods.
@@ -69,9 +82,22 @@ def importpyclass(
       - list of wrapped bound methods (callables) that the external environment can call.
     """
     # Convert module/class/method names from ASCII lists to strings
-    module_name = external_to_python(module_name_list, str)
-    class_name = external_to_python(class_name_list, str)
-    method_names = external_to_python(cls_methods, list[str])
+    module_name = pythonic(module_name_list, str)
+    class_name = pythonic(class_name_list, str)
+    method_names = pythonic(cls_methods, list[str])
+    manual_annotation = []
+    init_annotation = []
+
+    if annotation_str_list is not None:
+        all_fn_annotations = pythonic(annotation_str_list, list[str])
+        init = all_fn_annotations.pop(0)
+        init_params_lst,init_rt_str = split_annotation_str(init)
+        init_annotation = list(map(parse_type_string,init_params_lst))
+
+        for annotation in all_fn_annotations:
+            annotation_params_lst,annotation_rt_str = split_annotation_str(annotation)
+
+            manual_annotation.append( (annotation_params_lst,annotation_rt_str) )
 
     # Import the module and class
     try:
@@ -89,7 +115,7 @@ def importpyclass(
         init_sig = inspect.signature(cls.__init__)
         init_params = list(init_sig.parameters.values())
         # Drop 'self' (first parameter) if present
-        if init_params and init_params[0].name == 'self':
+        if init_params and init_params[0].name in ['self','cls']:
             init_params = init_params[1:]
     except (ValueError, TypeError):
         # Builtins or unusual objects might not have inspectable signature
@@ -107,10 +133,13 @@ def importpyclass(
     for i, ext_arg in enumerate(cls_init_args or []):
         if i < len(init_params):
             param = init_params[i]
-            target_type = init_hints.get(param.name, None)
+            if manual_annotation:
+                target_type = init_annotation[i] if i < len(init_annotation) else None
+            else:
+                target_type = init_hints.get(param.name, None)
             if target_type and target_type is not type(None):
                 # use helper to convert from external to Python
-                converted = pythonic(ext_arg, target_type)
+                converted = pythonic(ext_arg, target_type,f"{class_name}::__init__::{param.name}")
             else:
                 # no hint available — pass raw external value through
                 converted = ext_arg
@@ -137,9 +166,10 @@ def importpyclass(
             raise TypeError(f"Attribute '{mname}' of '{class_name}' is not callable")
 
         # wrap the bound method so external callers can call it
-        wrapped = wrap_pyfunc(bound_method)
-        wrapped_methods.append(wrapped)
+        manual = manual_annotation.pop(0) if manual_annotation else (None,None)
 
+        wrapped = wrap_pyfunc(bound_method,manual[0],manual[1])
+        wrapped_methods.append(wrapped)
     return wrapped_methods
 
 
@@ -152,40 +182,3 @@ def import_py(module_name: str, functions: List[str]) -> List[Any]:
 
 
 
-
-# Example usage from Python (for testing):
-if __name__ == "__main__":
-    # Example 1: Import random module functions
-    random_funcs = import_py("random", ["randint", "randrange", "choice"])
-    randint_func, randrange_func, choice_func = random_funcs
-
-    # These functions are already wrapped for Awesome calling
-    # From Awesome, you would call: [1, 10](randint) %>()?
-    print(f"Random int between 1-10: {randint_func(1, 10)}")
-
-    # Example 2: Import a class
-    import math
-
-    # Create a custom class for demonstration
-    class Calculator:
-        def __init__(self, precision: int = 2):
-            self.precision = precision
-
-        def add(self, a: int, b: int) -> int:
-            return round(a + b, self.precision)
-
-        def multiply(self, a: int, b: int) -> int:
-            return round(a * b, self.precision)
-
-    # Simulate importing this class from Awesome
-    # Note: In real Awesome, Calculator would be in a module
-    calc_methods = importpyclass(
-        "__main__",  # Current module
-        "Calculator",
-        [2],  # init_args: precision=2
-        ["add", "multiply"]
-    )
-
-    add_func, multiply_func = calc_methods
-    print(f"Add with precision 2: {add_func(3, 2)}")  # Should be 5.86
-    print(f"Multiply with precision 2: {multiply_func(3, 2)}")  # Should be 6.28
