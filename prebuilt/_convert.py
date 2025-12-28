@@ -130,6 +130,15 @@ def python_to_external(value, target_type):
         inner = args[0]
         return [python_to_external(v, inner) for v in value]
 
+    if origin is tuple and args:
+        if not isinstance(value, tuple):
+            raise TypeError("Expected tuple")
+        l = []
+        for i, inner in enumerate(args):
+            v = value[i]
+            l.append(python_to_external(v, inner))
+        return list(l)
+
 
     raise TypeError(f"Unsupported target type: {target_type} (origin={origin}, args={args})")
 

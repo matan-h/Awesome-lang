@@ -4,7 +4,7 @@ from ._utils import fn
 
 @fn("system")
 @convert4()
-def system(command_list: str) -> tuple[str,str,int]:
+def system(command: list[str]) -> tuple[str,str,int]:
     """
     Execute a system command from Awesome environment.
 
@@ -15,12 +15,10 @@ def system(command_list: str) -> tuple[str,str,int]:
     import subprocess
 
     # Convert ASCII list to string
-    command = pythonic(command_list, str)
 
     # Execute the command
     process = subprocess.Popen(
         command,
-        shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True
@@ -28,4 +26,4 @@ def system(command_list: str) -> tuple[str,str,int]:
     stdout, stderr = process.communicate()
     returncode = process.returncode
 
-    return stdout, stderr, str(returncode)
+    return stdout, stderr, returncode

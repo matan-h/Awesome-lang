@@ -1,14 +1,13 @@
 
 from ._utils import fn,builtin_funcs,builtin_vars
-from . import importpy
+from .importpy import convert4
+
+from . import os
 # system
 @fn("print")
-def builtin_print(chr_list: list[int]) -> None:
-    if not chr_list:
-        print()
-        return None
-    # TODO: verify types
-    print("".join(chr(c) for c in chr_list))
+@convert4()
+def builtin_print(inp: str) -> None:
+    print(inp)
     return None
 
 @fn("uppercase")

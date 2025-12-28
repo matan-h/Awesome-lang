@@ -7,6 +7,7 @@ from typing import Any, List, Dict, Generator
 
 import prebuilt
 # --- The Grammar ---
+# Rule: uppercase are named, lowercase are anonymous
 GRAMMAR = r"""
     start: (statement | separator)*
 
@@ -48,6 +49,7 @@ GRAMMAR = r"""
     ?term: list_literal
          | generator
          | string
+         | REV_STRING
          | atom
          | infinity
          | "(" complete_expression ")"
@@ -62,6 +64,12 @@ GRAMMAR = r"""
               | "[" complete_expression "," ".." "]" -> gen_const
 
     string: ESCAPED_STRING
+
+REV_STRING: /'[^']*'/
+        # rev_string: "'" revchar* "'"
+    # revchar: /[^']/
+
+
     infinity: "~" NUMBER
 
     NUMBER: /-?\d+/
@@ -72,7 +80,10 @@ GRAMMAR = r"""
     # OP: operator that is NOT followed by whitespace (default left-to-right)
     OP: /(\+|-|\*|\/|\[\]>|&|==)(?=\S)/
 
-    %import common.CNAME -> NAME
+    NAME: /[^\s\[\]\(\)\{\},:"@%#?>]+/
+
+
+    %import common.CNAME
     %import common.SIGNED_NUMBER
     %import common.ESCAPED_STRING
     %import common.WS
@@ -80,6 +91,7 @@ GRAMMAR = r"""
 
     %ignore WS
     %ignore /#[^\n{].*/  // Simple comments
+
 """
 
 
@@ -133,8 +145,12 @@ class AwesomeInterpreter:
             if node.type == 'NUMBER':
                 # Mutable Number Logic
                 return self.literal_patches.get(node.value, int(node.value))
-            if node.type == 'ESCAPED_STRING':
+            elif node.type == 'ESCAPED_STRING':
                 return [ord(c) for c in node.value[1:-1]]
+            elif node.type == 'REV_STRING':
+                return [ord(c) for c in node.value[1:-1]][::-1]
+            else:
+                self.error(f"Unknown token type for get_val: {node.type} {node}", RuntimeError)
         return node
 
     def get_infinities(self, code):
@@ -243,42 +259,52 @@ class AwesomeInterpreter:
                 name = child.children[0].value
                 if name in self.macros:
                     self.run(self.macros[name])
+            elif op in ["separator","start"]:
+                # Ignore separators at this level
+                pass
+            else:
+                self.error(f"Unknown statement type: {op}", RuntimeError)
 
 
     # --- Expression Evaluator (Left-to-Right) ---
     def eval_expr(self, node):
+        self.current_node = node
+
         if not isinstance(node, Tree):
             return self.get_val(node)
 
         # Base terms
-        if node.data == 'number_lit':
+        elif node.data == 'number_lit':
             return self.get_val(node.children[0])
-        if node.data == 'variable':
+        elif node.data == 'variable':
             return self.vars.get(node.children[0].value, 0)
-        if node.data == 'string':
+        elif node.data == 'string':
             return self.get_val(node.children[0])
-        if node.data == 'infinity':
+        elif node.data == 'rev_string':
+            return self.get_val(node.children[0])
+
+        elif node.data == 'infinity':
             return self.get_infinities(node.children[0].value)
-        if node.data == 'list_literal':
+        elif node.data == 'list_literal':
             return [self.eval_expr(c) for c in node.children]
 
         # Handle complete_expression - just evaluate its child
-        if node.data == 'complete_expression':
+        elif node.data == 'complete_expression':
             return self.eval_expr(node.children[0])
 
         # Handle simple_expression - the old expression without apply_op
-        if node.data == 'simple_expression':
+        elif node.data == 'simple_expression':
             return self.eval_simple_expression(node)
 
         # Handle function calls
-        if node.data == 'func_call':
+        elif node.data == 'func_call':
             # Evaluate the list literal to get arguments
             args = self.eval_expr(node.children[0])
             func_name = node.children[1].value
             # Call the function immediately
             return self.call_func(func_name, args)
 
-        if node.data == 'func_prep':
+        elif node.data == 'func_prep':
             # Prepare function for later application
             args = self.eval_expr(node.children[0])
             func_name = node.children[1].value
@@ -286,17 +312,17 @@ class AwesomeInterpreter:
             return (func_name, args)
 
         # Infinite Generators
-        if node.data == 'gen_arithmetic':
+        elif node.data == 'gen_arithmetic':
             start = self.eval_expr(node.children[0])
             second = self.eval_expr(node.children[1])
             step = second - start
             return LazyList(itertools.count(start, step))
 
-        if node.data == 'gen_const':
+        elif node.data == 'gen_const':
             val = self.eval_expr(node.children[0])
             return LazyList(itertools.repeat(val))
 
-        if node.data == 'gen_func':
+        elif node.data == 'gen_func':
             # children[-1] is the NAME of the function
             # children[:-1] are the seed values
             func_name = node.children[-1].value
@@ -316,6 +342,8 @@ class AwesomeInterpreter:
                     yield val
 
             return LazyList(func_gen())
+        else:
+            self.error(f"Unknown expression type: {node.data}", RuntimeError)
 
     def execute_block(self, node):
         """Executes a list of statements and returns the value of the last expression."""
@@ -367,6 +395,7 @@ class AwesomeInterpreter:
 
     def call_func(self, name:str, args:list):
         if name in prebuilt.builtin_funcs:
+            # print(  f"Calling prebuilt function: {name} with args {args}"  )
             return prebuilt.builtin_funcs[name](*args)
 
         if name not in self.funcs:
@@ -395,6 +424,7 @@ class AwesomeInterpreter:
         - default: left-to-right
         - if any operator token is OP_WS: evaluate using normal operator precedence
         """
+        # print("Evaluating simple_expression:", node.pretty())
         # Build flattened lists: values and operator tokens
         values = []
         ops = []
@@ -530,7 +560,7 @@ class AwesomeInterpreter:
         return "unknown"
 
 
-    def error(self, message,cls=NameError):
+    def error(self, message,cls=callable):
         # meta.line is available because of propagate_positions=True
 
         # Format the Awesome Error
@@ -538,7 +568,7 @@ class AwesomeInterpreter:
 
 # --- Running ---
 
-def run_awesome(code):
+def run_awesome(code:str):
 
 
     parser = Lark(GRAMMAR, start='start', parser='earley',propagate_positions=True)
@@ -560,6 +590,9 @@ def run_awesome(code):
         interpreter.run(tree)
     except Exception as e:
         print(f"Awesome Error: {e}")
+        print("Node:", interpreter.current_node)
+
+        print("Line:", code.split("\n")[interpreter.line-1] if isinstance(interpreter.line,int) and interpreter.line>0 else "")
         raise
 
 # --- Test Script ---

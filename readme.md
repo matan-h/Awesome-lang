@@ -2,7 +2,7 @@
 
 > Everyone need just one simple, logical language
 
-At Awesome, we believe programming language should be minimal. It should not get in the way.
+At Awesome (AKA `>4`), we believe programming language should be minimal. It should not get in the way.
 
 
 There is only one keyword for looping, only over lists: `loop`.
@@ -364,8 +364,8 @@ We allow you to use your favorite python modules using `importpy` function
 running system command (using `'` to allow `"` inside the string)
 ```ruby
 [ 'ohce','"ih"' ](!) %>() -> info
-1 []> info -> out
-[ out ](print) %>() :# print hi
+0 []> info -> out
+[ out ](print) %>() :# print "hi"
 ```
 
 
