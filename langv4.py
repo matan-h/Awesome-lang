@@ -51,7 +51,6 @@ GRAMMAR = r"""
          | string
          | REV_STRING
          | atom
-         | infinity
          | "(" complete_expression ")"
 
     atom: NUMBER -> number_lit
@@ -69,8 +68,6 @@ REV_STRING: /'[^']*'/
         # rev_string: "'" revchar* "'"
     # revchar: /[^']/
 
-
-    infinity: "~" NUMBER
 
     NUMBER: /-?\d+/
 
@@ -129,7 +126,7 @@ class LazyList:
 
 class AwesomeInterpreter:
     def __init__(self):
-        self.vars = {}
+        self.vars = prebuilt.builtin_vars.to_dict().copy()
         self.funcs = {}
         self.macros = {}
         # Mutable numbers: Maps the string "2" to the value 5, etc.
@@ -139,7 +136,7 @@ class AwesomeInterpreter:
 
 
     # --- Core Helpers ---
-    def get_val(self, node):
+    def parse_val(self, node):
         """Resolves atoms, numbers, strings to Python primitives/LazyLists."""
         if isinstance(node, Token):
             if node.type == 'NUMBER':
@@ -152,19 +149,6 @@ class AwesomeInterpreter:
             else:
                 self.error(f"Unknown token type for get_val: {node.type} {node}", RuntimeError)
         return node
-
-    def get_infinities(self, code):
-        """Resolves specific ~N infinities."""
-        code = int(code)
-        mapping = {
-            8: float('inf'),
-            0: 0, # The void
-            1: -1,
-            3: os.getpid(),
-            7: sys.maxsize, # Crypto/Arch infinity
-            2: 10**22 # Approx stars
-        }
-        return mapping.get(code, float('inf'))
 
     # --- Execution Loop ---
     def run(self, node):
@@ -268,23 +252,26 @@ class AwesomeInterpreter:
 
     # --- Expression Evaluator (Left-to-Right) ---
     def eval_expr(self, node):
+        print("Evaluating expr:", node.pretty())
         self.current_node = node
 
         if not isinstance(node, Tree):
-            return self.get_val(node)
+            return self.parse_val(node)
 
         # Base terms
         elif node.data == 'number_lit':
-            return self.get_val(node.children[0])
+            return self.parse_val(node.children[0])
         elif node.data == 'variable':
-            return self.vars.get(node.children[0].value, 0)
-        elif node.data == 'string':
-            return self.get_val(node.children[0])
-        elif node.data == 'rev_string':
-            return self.get_val(node.children[0])
+            try:
+                return self.vars[node.children[0].value]
+            except KeyError:
+                self.error(f"Variable '{node.children[0].value}' not defined.",NameError)
 
-        elif node.data == 'infinity':
-            return self.get_infinities(node.children[0].value)
+        elif node.data == 'string':
+            return self.parse_val(node.children[0])
+        elif node.data == 'rev_string':
+            return self.parse_val(node.children[0])
+
         elif node.data == 'list_literal':
             return [self.eval_expr(c) for c in node.children]
 

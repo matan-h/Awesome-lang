@@ -2,7 +2,7 @@
 from ._utils import fn,builtin_funcs,builtin_vars
 from .importpy import convert4
 
-from . import os
+from . import system,inf
 # system
 @fn("print")
 @convert4()
