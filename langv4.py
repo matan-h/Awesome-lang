@@ -1,17 +1,36 @@
+from dataclasses import dataclass
 import sys
 import os
 import itertools
 from types import FunctionType
 from lark import Lark, Tree, Token
-from typing import Any, List, Dict, Generator
+from typing import Any, Callable, Iterable, Iterator, List, Dict, Generator, TypeAlias
 
 import prebuilt
+from typing import TypeVar, Type
+
+
+T = TypeVar("T")
+
+def ensure_type(obj: object, typ: type[T]) -> T:
+    if not isinstance(obj, typ):
+        raise TypeError(f"Expected {typ}, got {type(obj)}")
+    return obj
+
+def Itoken(obj: object) -> Token:
+    return ensure_type(obj, Token)
+
 # --- The Grammar ---
 # Rule: uppercase are named, lowercase are anonymous
 GRAMMAR = r"""
     start: (statement | separator)*
 
+
     separator: NEWLINE | ":"
+    LOOP_KW.2: "loop"
+    POOL_KW.2: "pool"
+
+    loop_block: "loop" NAME "&" simple_expression block "pool" [NAME]
 
     ?statement: func_def
               | loop_block
@@ -21,10 +40,23 @@ GRAMMAR = r"""
               | assignment
               | print_stmt
               | func_call_stmt
+              | apply_keyword
 
-    func_def: "(" NAME ")" block NAME "()"
-    loop_block: "loop" NAME "&" simple_expression block "pool" [NAME]
-    conditional: simple_expression "?%>" statement
+    # func_def: "(" NAME ")" block FNNAME "()"
+    # func_def: "(" [NAME ("," NAME)*] ")" FNNAME block FNNAME "()"
+    func_def: "(" parameters ")" NAME block NAME "()"
+
+    parameters: [param ("," param)*]
+    param: PARAM_NAME ["$" NAME]
+
+# In your rule, use the new Terminal
+
+    conditional: simple_expression "?%>" (NAME|SYMBOL)
+
+    apply_keyword: complete_expression apply NAME
+    SYMBOL.1: /[^\s(]+[^\s]*/
+    apply: "%>"
+
     block: (statement | separator)*
 
     codeblock_def: "#" NAME ["@"] "{" block "}"
@@ -41,7 +73,7 @@ GRAMMAR = r"""
     complete_expression: func_call
                        | simple_expression
 
-    func_call: list_literal "(" NAME ")" "%>" "()" -> func_call
+    func_call: list_literal "(" NAME ")" apply "()" -> func_call
              | list_literal "(" NAME ")"           -> func_prep
 
     ?simple_expression: term ((OP | OP_WS) term)*
@@ -52,24 +84,24 @@ GRAMMAR = r"""
          | REV_STRING
          | atom
          | "(" complete_expression ")"
+         | "-" term -> neg # [-4]
 
     atom: NUMBER -> number_lit
         | NAME   -> variable
 
     list_literal: "[" [complete_expression ("," complete_expression)*] "]"
 
-    ?generator: "[" (complete_expression ",")* NAME "," ".." "]" -> gen_func
+    ?generator: "[" (complete_expression ",")* NAME "," ".." "]" "%>" "()" -> gen_func
               | "[" complete_expression "," complete_expression "," ".." "]" -> gen_arithmetic
               | "[" complete_expression "," ".." "]" -> gen_const
 
     string: ESCAPED_STRING
 
-REV_STRING: /'[^']*'/
-        # rev_string: "'" revchar* "'"
-    # revchar: /[^']/
+    REV_STRING: /'[^']*'/
 
 
-    NUMBER: /-?\d+/
+    # NUMBER: /-?\d+/
+    NUMBER: /\d+/
 
     # OP_WS: operator that is followed by whitespace in the source (user signaled precedence)
     OP_WS: /(\+|-|\*|\/|\[\]>|&|==)(?=\s)/
@@ -77,7 +109,9 @@ REV_STRING: /'[^']*'/
     # OP: operator that is NOT followed by whitespace (default left-to-right)
     OP: /(\+|-|\*|\/|\[\]>|&|==)(?=\S)/
 
-    NAME: /[^\s\[\]\(\)\{\},:"@%#?>]+/
+    NAME.0: /[^\s\[\]\(\)\{\},:"@%#?>+*&-\/()]+/
+    PARAM_NAME: /[^\s\[\]\(\)\{\},:"@%#?>+*$-\/]+/
+    # FNNAME: /[^\s\[\]\(\)\{\},:"?()\/]+/
 
 
     %import common.CNAME
@@ -91,10 +125,16 @@ REV_STRING: /'[^']*'/
 
 """
 
+@dataclass
+class AwesomeFunction:
+    args: dict[str,str]
+    body:Tree
+
+T = TypeVar("T")
 
 class LazyList:
     """A wrapper for generators that caches results for random access."""
-    def __init__(self, gen: Generator):
+    def __init__(self, gen: Iterator[T]):
         self.gen = gen
         self.cache = []
         self.is_infinite = True
@@ -124,11 +164,20 @@ class LazyList:
         preview = ",".join(map(str, self.cache[:3]))
         return f"[{preview}{',..' if self.is_infinite else ''}]"
 
+# AwesomeType = LazyList|int|AwesomeFunction|Callable|list["NestedList"]
+AwesomeBase: TypeAlias = int | LazyList | AwesomeFunction | Callable
+
+# 2. Define the recursive structure
+# This allows for: int, list[int], list[list[int]], etc.
+# AND: AwesomeFunction, list[AwesomeFunction], etc.
+AwesomeType: TypeAlias = AwesomeBase | list["AwesomeType"]
+
 class AwesomeInterpreter:
     def __init__(self):
-        self.vars = prebuilt.builtin_vars.to_dict().copy()
-        self.funcs = {}
-        self.macros = {}
+        self.vars:dict[str,AwesomeType] = prebuilt.builtin_vars.to_dict().copy()
+
+        # self.funcs = {}
+        self.codeblocks = {}
         # Mutable numbers: Maps the string "2" to the value 5, etc.
         self.literal_patches = {}
         self.should_break = False
@@ -148,10 +197,144 @@ class AwesomeInterpreter:
                 return [ord(c) for c in node.value[1:-1]][::-1]
             else:
                 self.error(f"Unknown token type for get_val: {node.type} {node}", RuntimeError)
-        return node
+        self.error("cannot parse val thats not Token",TypeError)
+        # return node
+
+    def run(self,child:Tree):
+
+        op = child.data
+
+        # Handle expr_stmt - function calls or expressions as statements
+        if op == 'expr_stmt':
+            self.eval_expr(child.children[0])
+
+        elif op == 'assignment':
+            val = self.eval_expr(child.children[0])
+            target = Itoken(child.children[1])
+            # Check if target is a number literal string
+            if target.value.isdigit():
+                # x -> 2 (Modify what "2" means)
+                lit_key = target.value
+                self.literal_patches[lit_key] = val
+            else:
+                # x -> a (Standard variable)
+                var_name = target.value
+                self.vars[var_name] = val
+
+
+        elif op == 'print_op':
+            val = self.eval_expr(child.children[0])
+            # Count is now the number of '?' tokens after the expression
+            count = len([c for c in child.children if isinstance(c, Token) and c.type == 'QMARK'])
+            # Logic for ??, ??? can be expanded here.
+            # ? = print result.
+            print(f">> {val}" if count > 1 else val)
+
+        elif op == 'print_newline':
+            count = len([c for c in child.children if isinstance(c, Token) and c.type == 'QMARK'])
+            for _ in range(count):
+                print()
+
+        elif op == 'loop_block':
+            var_name = Itoken(child.children[0]).value
+            iterable = self.eval_expr(child.children[1])
+
+            body = child.children[2]
+
+            # Handle Python list or LazyList
+            if isinstance(iterable, Iterable):
+                iterator = iter(iterable)
+            else:
+                iterator = []  # fallback for non-iterables
+
+
+            for item in iterator:
+                self.vars[var_name] = item
+                self.run_container(body)
+                if self.should_break:
+                    self.should_break = False
+                    break
+
+        elif op == 'conditional':
+            # expr ?%> stmt
+            val = self.eval_expr(child.children[0])
+            # Truthiness: Non-zero number or non-empty list
+            is_true = bool(val) #(isinstance(val, int) and val != 0) or (isinstance(val, list) and len(val) > 0)
+            if is_true:
+                stmt = child.children[1]
+                self.run_apply(Itoken(stmt).value,val)
+
+        elif op == 'func_def':
+            params = child.children[0]
+            arg_names = {}
+            for param in params.children:
+                param_name = Itoken(param.children[0]).value
+                param_type = Itoken(param.children[1]).value if param.children[1] else None
+
+
+                # TODO: add types
+
+                if param_name in arg_names:
+                    self.error(f"Duplicate parameter name '{param_name}' in function definition.", TypeError)
+
+                arg_names.update({param_name:param_type})
+
+            func_name = Itoken(child.children[1]).value
+            # for param in child.children:
+            #     print("adding param:",param)
+            #     arg_names.append(Itoken(param).value)
+
+
+            # params_node = child.children[0]
+            # if params_node is None:
+            # else:
+            #     arg_names = [Itoken(params_node).value]
+            # arg_name:str = Itoken(child.children[0]).value
+            body:Tree = child.children[2]
+            self.vars[func_name] = AwesomeFunction(arg_names, body)
+
+        elif op == 'codeblock_def':
+            name = Itoken(child.children[0]).value
+            # Check for '@' token
+            is_delayed = len(child.children) > 2 and child.children[1] == "@"
+            body = child.children[-1]
+            self.codeblocks[name] = body
+            # If not delayed (no @), run immediately per spec
+            if not is_delayed:
+                self.run_container(body)
+
+        elif op == 'codeblock_run':
+            name = Itoken(child.children[0]).value
+            if name in self.codeblocks:
+                self.run_container(self.codeblocks[name])
+
+        elif op == 'apply_keyword':
+            expr = child.children[0]
+            val = self.eval_expr(expr)[0] # type: ignore
+            assert isinstance(val,AwesomeFunction)
+            kw_name = Itoken(child.children[2]).value
+            self.run_apply(kw_name,val)
+
+
+
+        elif op in ["separator","start"]:
+            # Ignore separators at this level
+            pass
+        else:
+            self.error(f"Unknown statement type: {op}", RuntimeError)
+
+    def run_apply(self,kw_name,param:AwesomeType|None=None):
+        match kw_name:
+            case "pool":
+                self.should_break = True
+            case "macro":
+                print("TODO: macro",param)
+            case n:
+                self.error(f"unknown apply name:{n}",SyntaxError)
+
 
     # --- Execution Loop ---
-    def run(self, node):
+    def run_container(self, node):
         self.current_node = node
         if self.should_break: return
 
@@ -162,92 +345,7 @@ class AwesomeInterpreter:
             if self.should_break: break
             if isinstance(child, Token): continue
 
-            op = child.data
-
-            # Handle expr_stmt - function calls or expressions as statements
-            if op == 'expr_stmt':
-                self.eval_expr(child.children[0])
-
-            elif op == 'assignment':
-                val = self.eval_expr(child.children[0])
-                target = child.children[1]
-                # Check if target is a number literal string
-                if target.value.isdigit():
-                    # x -> 2 (Modify what "2" means)
-                    lit_key = target.value
-                    self.literal_patches[lit_key] = val
-                else:
-                    # x -> a (Standard variable)
-                    var_name = target.value
-                    self.vars[var_name] = val
-
-
-            elif op == 'print_op':
-                val = self.eval_expr(child.children[0])
-                # Count is now the number of '?' tokens after the expression
-                count = len([c for c in child.children if isinstance(c, Token) and c.type == 'QMARK'])
-                # Logic for ??, ??? can be expanded here.
-                # ? = print result.
-                print(f">> {val}" if count > 1 else val)
-
-            elif op == 'print_newline':
-                count = len([c for c in child.children if isinstance(c, Token) and c.type == 'QMARK'])
-                for _ in range(count):
-                    print()
-
-            elif op == 'loop_block':
-                var_name = child.children[0].value
-                iterable = self.eval_expr(child.children[1])
-                body = child.children[2]
-
-                # Handle Python list or LazyList
-                iterator = iter(iterable) if hasattr(iterable, '__iter__') else []
-
-                for item in iterator:
-                    self.vars[var_name] = item
-                    self.run(body)
-                    if self.should_break:
-                        self.should_break = False
-                        break
-
-            elif op == 'conditional':
-                # expr ?%> stmt
-                val = self.eval_expr(child.children[0])
-                # Truthiness: Non-zero number or non-empty list
-                is_true = (isinstance(val, int) and val != 0) or (isinstance(val, list) and len(val) > 0)
-                if is_true:
-                    stmt = child.children[1]
-                    # Check for "pool" keyword acting as break
-                    if isinstance(stmt, Token) and stmt.type == 'POOL':
-                        self.should_break = True
-                    else:
-                        self.run(stmt)
-
-            elif op == 'func_def':
-                arg_name = child.children[0].value
-                body = child.children[1]
-                func_name = child.children[2].value
-                self.funcs[func_name] = (arg_name, body)
-
-            elif op == 'codeblock_def':
-                name = child.children[0].value
-                # Check for '@' token
-                is_delayed = len(child.children) > 2 and child.children[1] == "@"
-                body = child.children[-1]
-                self.macros[name] = body
-                # If not delayed (no @), run immediately per spec
-                if not is_delayed:
-                    self.run(body)
-
-            elif op == 'codeblock_run':
-                name = child.children[0].value
-                if name in self.macros:
-                    self.run(self.macros[name])
-            elif op in ["separator","start"]:
-                # Ignore separators at this level
-                pass
-            else:
-                self.error(f"Unknown statement type: {op}", RuntimeError)
+            self.run(child)
 
 
     # --- Expression Evaluator (Left-to-Right) ---
@@ -259,13 +357,17 @@ class AwesomeInterpreter:
             return self.parse_val(node)
 
         # Base terms
+        elif node.data == "neg":
+            return -self.eval_expr(node.children[0])
         elif node.data == 'number_lit':
             return self.parse_val(node.children[0])
         elif node.data == 'variable':
+            name = Itoken(node.children[0]).value
+            assert isinstance(name, str)
             try:
-                return self.vars[node.children[0].value]
+                return self.vars[name]
             except KeyError:
-                self.error(f"Variable '{node.children[0].value}' not defined.",NameError)
+                self.error(f"Variable '{name}' not defined.",NameError)
 
         elif node.data == 'string':
             return self.parse_val(node.children[0])
@@ -279,7 +381,7 @@ class AwesomeInterpreter:
         elif node.data == 'complete_expression':
             return self.eval_expr(node.children[0])
 
-        # Handle simple_expression - the old expression without apply_op
+        # Handle simple_expression
         elif node.data == 'simple_expression':
             return self.eval_simple_expression(node)
 
@@ -287,14 +389,14 @@ class AwesomeInterpreter:
         elif node.data == 'func_call':
             # Evaluate the list literal to get arguments
             args = self.eval_expr(node.children[0])
-            func_name = node.children[1].value
+            func_name = Itoken(node.children[1]).value
             # Call the function immediately
             return self.call_func(func_name, args)
 
         elif node.data == 'func_prep':
             # Prepare function for later application
             args = self.eval_expr(node.children[0])
-            func_name = node.children[1].value
+            func_name = Itoken(node.children[1]).value
             # Return a tuple that can be called later
             return (func_name, args)
 
@@ -310,9 +412,16 @@ class AwesomeInterpreter:
             return LazyList(itertools.repeat(val))
 
         elif node.data == 'gen_func':
+            func_name = Itoken(node.children[-1]).value
+            resolved = self.resolve_var(func_name)
+
+            if not self.is_function(resolved):
+                self.error("not a function in gen_func expression",SyntaxError)
+
+
+
             # children[-1] is the NAME of the function
             # children[:-1] are the seed values
-            func_name = node.children[-1].value
             seed_nodes = node.children[:-1]
             seeds = [self.eval_expr(s) for s in seed_nodes]
 
@@ -324,7 +433,7 @@ class AwesomeInterpreter:
                 # Then, start calling the function to generate new elements
                 while True:
                     # Pass the current state of the list to the generator function
-                    val = self.call_func(func_name, list(acc))
+                    val = self.call_func(func_name, [list(acc)])
                     acc.append(val)
                     yield val
 
@@ -349,7 +458,7 @@ class AwesomeInterpreter:
 
             elif op == 'assignment':
                 last_val = self.eval_expr(child.children[0])
-                target = child.children[1]
+                target = Itoken(child.children[1])
                 name = target.value
                 if name.isdigit():
                     self.literal_patches[name] = last_val
@@ -378,30 +487,71 @@ class AwesomeInterpreter:
         # TODO: verify types
         return fn(*args)
 
+    def resolve_var(self,var_name:str)->AwesomeType:
+        if var_name in self.vars:
+            return self.vars[var_name]
+
+        elif var_name in prebuilt.builtin_funcs:
+            return prebuilt.builtin_funcs[var_name]
+
+        elif var_name.isdigit():
+            return self.literal_patches.get(var_name,int(var_name))
+        else:
+            self.error(f"Name '{var_name}' not defined.",NameError)
 
 
-    def call_func(self, name:str, args:list):
-        if name in prebuilt.builtin_funcs:
-            # print(  f"Calling prebuilt function: {name} with args {args}"  )
-            return prebuilt.builtin_funcs[name](*args)
 
-        if name not in self.funcs:
-            if name in self.vars and isinstance(self.vars[name], FunctionType) :
-                fn = self.vars[name]
-                return self.call_funcType(fn,args)
-            else:
-                self.error(f"Function '{name}' not defined.",NameError)
-        arg_var, body = self.funcs[name]
+    @staticmethod
+    def is_function(fn:AwesomeType)->bool:
+        return (callable(fn) or isinstance(fn, AwesomeFunction))
 
-        # Scope Management
-        prev = self.vars.get(arg_var)
-        self.vars[arg_var] = args
+    def get_function(self,name:str)->Callable |AwesomeFunction :
+        resolved = self.resolve_var(name)
 
-        # Now 8? will work because execute_block handles print_op!
+        if not self.is_function(resolved) :
+            self.error(f"Variable '{name}' is not a function.",TypeError)
+
+        if callable(resolved):
+            return resolved
+
+        if not isinstance(resolved, AwesomeFunction):
+            raise RuntimeError("impossible state")
+
+        return resolved
+
+
+
+
+
+    def call_func(self, name:str, arg_values:list):
+        fn = self.get_function(name)
+
+        if callable(fn):
+            return self.call_funcType(self.vars[name],arg_values)
+
+        arg_names, body = fn.args, fn.body
+
+
+        # Check if the number of arguments matches
+        if len(arg_names) != len(arg_values):
+            self.error(f"Function '{name}' expects {len(arg_names)} arguments, but got {len(arg_values)}.", TypeError)
+
+        # 1. Scope Management: Save previous values
+        prev_values = {}
+        for i, arg_name in enumerate(arg_names):
+            prev_values[arg_name] = self.vars.get(arg_name) # Store old value (or None)
+            self.vars[arg_name] = arg_values[i]            # Assign new value
+
+        # 2. Execute the block
         ret = self.execute_block(body)
 
-        if prev is not None: self.vars[arg_var] = prev
-        else: self.vars.pop(arg_var, None)
+        # 3. Restore Scope: Clean up
+        for arg_name, old_val in prev_values.items():
+            if old_val is not None:
+                self.vars[arg_name] = old_val
+            else:
+                self.vars.pop(arg_name, None)
+
         return ret
 
     def eval_simple_expression(self, node):
@@ -450,8 +600,7 @@ class AwesomeInterpreter:
             elif op == "[]>":
                 return self.get_index(a, b)
             elif op == "&":
-                # choose semantics you already use for '&' if any; example bitwise-like:
-                return a & b
+                return a in b
             else:
                 raise RuntimeError(f"Unknown operator {op}")
 
@@ -535,7 +684,7 @@ class AwesomeInterpreter:
             # Awesome logic: index 0 is start, out of bounds is 0
             try:
                 return right[idx]
-            except (IndexError, TypeError):
+            except (IndexError):
                 return 0
         return 0
 
@@ -562,19 +711,19 @@ def run_awesome(code:str):
     interpreter = AwesomeInterpreter()
 
     # Patch the evaluator to handle func_prep
-    original_eval = interpreter.eval_expr
-    def patched_eval(node):
-        if isinstance(node, Tree) and node.data == 'func_prep':
-            args = interpreter.eval_expr(node.children[0])
-            name = node.children[1].value
-            return (name, args) # Return tuple for apply_op to catch
-        return original_eval(node)
-    interpreter.eval_expr = patched_eval
+    # original_eval = interpreter.eval_expr
+    # def patched_eval(node):
+    #     if isinstance(node, Tree) and node.data == 'func_prep':
+    #         args = interpreter.eval_expr(node.children[0])
+    #         name = Itoken(node.children[1]).value
+    #         return (name, args) # Return tuple for apply_op to catch
+    #     return original_eval(node)
+    # interpreter.eval_expr = patched_eval
 
     try:
         tree = parser.parse(code)
-        # print(tree.pretty());
-        interpreter.run(tree)
+        print(tree.pretty());
+        interpreter.run_container(tree)
     except Exception as e:
         print(f"Awesome Error: {e}")
         print("Node:", interpreter.current_node)
