@@ -1,6 +1,7 @@
 import sys
 import os
 import itertools
+from types import FunctionType
 from lark import Lark, Tree, Token
 from typing import Any, List, Dict, Generator
 
@@ -63,6 +64,8 @@ GRAMMAR = r"""
     string: ESCAPED_STRING
     infinity: "~" NUMBER
 
+    NUMBER: /-?\d+/
+
     # OP_WS: operator that is followed by whitespace in the source (user signaled precedence)
     OP_WS: /(\+|-|\*|\/|\[\]>|&|==)(?=\s)/
 
@@ -70,7 +73,7 @@ GRAMMAR = r"""
     OP: /(\+|-|\*|\/|\[\]>|&|==)(?=\S)/
 
     %import common.CNAME -> NAME
-    %import common.SIGNED_NUMBER -> NUMBER
+    %import common.SIGNED_NUMBER
     %import common.ESCAPED_STRING
     %import common.WS
     %import common.NEWLINE
@@ -356,14 +359,22 @@ class AwesomeInterpreter:
 
         return last_val
 
+    def call_funcType(self,fn,args:list):
+        # TODO: verify types
+        return fn(*args)
+
+
 
     def call_func(self, name:str, args:list):
         if name in prebuilt.builtin_funcs:
-            # TODO: check signature, and print error
             return prebuilt.builtin_funcs[name](*args)
 
         if name not in self.funcs:
-            self.error(f"Function '{name}' not defined.",NameError)
+            if name in self.vars and isinstance(self.vars[name], FunctionType) :
+                fn = self.vars[name]
+                return self.call_funcType(fn,args)
+            else:
+                self.error(f"Function '{name}' not defined.",NameError)
         arg_var, body = self.funcs[name]
 
         # Scope Management
