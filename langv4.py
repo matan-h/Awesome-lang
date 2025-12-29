@@ -4,7 +4,7 @@ import os
 import itertools
 from types import FunctionType
 from lark import Lark, Tree, Token
-from typing import Any, Callable, Iterable, Iterator, List, Dict, Generator, TypeAlias
+from typing import Any, Callable, Iterable, Iterator, List, Dict, Generator, Sequence, TypeAlias
 
 import prebuilt
 from typing import TypeVar, Type
@@ -65,8 +65,9 @@ GRAMMAR = r"""
     assignment: complete_expression "->" ASSIGN_TARGET -> assignment
     ASSIGN_TARGET: /[^\s?]+/
 
-    print_stmt: complete_expression "?"+ -> print_op
-              | "@" "?"+                 -> print_newline
+    print_stmt: complete_expression QMARK+ -> print_op
+              | "@" QMARK+                 -> only_skip
+    QMARK: "?"
 
     func_call_stmt: complete_expression -> expr_stmt
 
@@ -120,7 +121,10 @@ GRAMMAR = r"""
     %import common.WS
     %import common.NEWLINE
 
-    %ignore WS
+    # %ignore WS
+    %import common.WS_INLINE
+%ignore WS_INLINE
+
     %ignore /#[^\n{].*/  // Simple comments
 
 """
@@ -170,7 +174,7 @@ AwesomeBase: TypeAlias = int | LazyList | AwesomeFunction | Callable
 # 2. Define the recursive structure
 # This allows for: int, list[int], list[list[int]], etc.
 # AND: AwesomeFunction, list[AwesomeFunction], etc.
-AwesomeType: TypeAlias = AwesomeBase | list["AwesomeType"]
+AwesomeType: TypeAlias = AwesomeBase | Sequence["AwesomeType"]
 
 class AwesomeInterpreter:
     def __init__(self):
@@ -183,10 +187,13 @@ class AwesomeInterpreter:
         self.should_break = False
         self.current_node = None # Track the node being executed
 
+        self.xor_errors = True
+
+        self.skip_lines_counter = 0
+
 
     # --- Core Helpers ---
-    def parse_val(self, node):
-        """Resolves atoms, numbers, strings to Python primitives/LazyLists."""
+    def _parse_val(self, node)->AwesomeType:
         if isinstance(node, Token):
             if node.type == 'NUMBER':
                 # Mutable Number Logic
@@ -198,11 +205,23 @@ class AwesomeInterpreter:
             else:
                 self.error(f"Unknown token type for get_val: {node.type} {node}", RuntimeError)
         self.error("cannot parse val thats not Token",TypeError)
-        # return node
+
+    def parse_val(self,node)->AwesomeType:
+        """Resolves atoms, numbers, strings to Python primitives/LazyLists."""
+        s = self._parse_val(node)
+        if isinstance(s,list) and node.line==1 and s==[117, 115, 101, 32, 101, 114, 114, 111, 114, 115]:
+            self.xor_errors = False
+        return s
+
+
+
 
     def run(self,child:Tree):
-
         op = child.data
+        if self.skip_lines_counter!=0:
+            if op=="separator":
+                self.skip_lines_counter-=1
+            return
 
         # Handle expr_stmt - function calls or expressions as statements
         if op == 'expr_stmt':
@@ -230,10 +249,10 @@ class AwesomeInterpreter:
             # ? = print result.
             print(f">> {val}" if count > 1 else val)
 
-        elif op == 'print_newline':
+        elif op == 'only_skip':
             count = len([c for c in child.children if isinstance(c, Token) and c.type == 'QMARK'])
-            for _ in range(count):
-                print()
+            self.skip_lines(count)
+
 
         elif op == 'loop_block':
             var_name = Itoken(child.children[0]).value
@@ -258,7 +277,6 @@ class AwesomeInterpreter:
         elif op == 'conditional':
             # expr ?%> stmt
             val = self.eval_expr(child.children[0])
-            # Truthiness: Non-zero number or non-empty list
             is_true = bool(val) #(isinstance(val, int) and val != 0) or (isinstance(val, list) and len(val) > 0)
             if is_true:
                 stmt = child.children[1]
@@ -323,12 +341,22 @@ class AwesomeInterpreter:
         else:
             self.error(f"Unknown statement type: {op}", RuntimeError)
 
+    def skip_lines(self,count:int):
+            if count > 6:
+                self.skip_lines_counter  = count-6
+            else:
+                self.error(f"@? is only for skipping lines (you have {count}, minimum 7 is required). ",SyntaxError)
+
     def run_apply(self,kw_name,param:AwesomeType|None=None):
         match kw_name:
             case "pool":
                 self.should_break = True
             case "macro":
                 print("TODO: macro",param)
+
+            case s if s.startswith("@") and len(s) > 1 and set(s[1:]) == {"?"}: #@????
+                self.skip_lines(len(s)-1)
+
             case n:
                 self.error(f"unknown apply name:{n}",SyntaxError)
 
@@ -343,14 +371,14 @@ class AwesomeInterpreter:
 
         for child in children:
             if self.should_break: break
-            if isinstance(child, Token): continue
+            if isinstance(child, Token):
+                continue
 
             self.run(child)
 
 
     # --- Expression Evaluator (Left-to-Right) ---
-    def eval_expr(self, node):
-        # print("Evaluating expr:", node.pretty())
+    def eval_expr(self, node)->AwesomeType:
         self.current_node = node
 
         if not isinstance(node, Tree):
@@ -358,7 +386,9 @@ class AwesomeInterpreter:
 
         # Base terms
         elif node.data == "neg":
-            return -self.eval_expr(node.children[0])
+            number = self.eval_expr(node.children[0])
+            assert isinstance(number,int)
+            return -number
         elif node.data == 'number_lit':
             return self.parse_val(node.children[0])
         elif node.data == 'variable':
@@ -389,6 +419,8 @@ class AwesomeInterpreter:
         elif node.data == 'func_call':
             # Evaluate the list literal to get arguments
             args = self.eval_expr(node.children[0])
+            assert isinstance(args,list)
+
             func_name = Itoken(node.children[1]).value
             # Call the function immediately
             return self.call_func(func_name, args)
@@ -404,6 +436,7 @@ class AwesomeInterpreter:
         elif node.data == 'gen_arithmetic':
             start = self.eval_expr(node.children[0])
             second = self.eval_expr(node.children[1])
+            assert isinstance(start,int) and isinstance(second,int)
             step = second - start
             return LazyList(itertools.count(start, step))
 
@@ -468,14 +501,14 @@ class AwesomeInterpreter:
             elif op == 'expr_stmt':
                 last_val = self.eval_expr(child.children[0])
 
-            elif op == 'conditional':
-                cond = self.eval_expr(child.children[0])
-                if cond: # Awesome truthy logic
-                    stmt = child.children[1]
-                    if isinstance(stmt, Token) and stmt.type == 'POOL':
-                        self.should_break = True
-                    else:
-                        self.execute_block(stmt)
+            # elif op == 'conditional':
+            #     cond = self.eval_expr(child.children[0])
+            #     if cond: # Awesome truthy logic
+            #         stmt = child.children[1]
+            #         if isinstance(stmt, Token) and stmt.type == 'POOL':
+            #             self.should_break = True
+            #         else:
+            #             self.execute_block(stmt)
 
             elif op in ('loop_block', 'func_def', 'codeblock_def', 'codeblock_run'):
                 # Route these back through the main run logic
@@ -527,7 +560,7 @@ class AwesomeInterpreter:
         fn = self.get_function(name)
 
         if callable(fn):
-            return self.call_funcType(self.vars[name],arg_values)
+            return self.call_funcType(fn,arg_values)
 
         arg_names, body = fn.args, fn.body
 
@@ -719,17 +752,24 @@ def run_awesome(code:str):
     #         return (name, args) # Return tuple for apply_op to catch
     #     return original_eval(node)
     # interpreter.eval_expr = patched_eval
+    tree = parser.parse(code)
+    print(tree.pretty());
 
     try:
-        tree = parser.parse(code)
-        print(tree.pretty());
         interpreter.run_container(tree)
     except Exception as e:
-        print(f"Awesome Error: {e}")
-        print("Node:", interpreter.current_node)
+        error = []
+        error.append(f"Awesome Error: {e}")
+        error.append(f"Node: {interpreter.current_node}")
 
-        print("Line:", code.split("\n")[interpreter.line-1] if isinstance(interpreter.line,int) and interpreter.line>0 else "")
-        raise
+        error.append("Line:"+(code.split("\n")[interpreter.line-1] if isinstance(interpreter.line,int) and interpreter.line>0 else ""))
+        error_str = "\n".join(error)
+        if interpreter.xor_errors:
+            lno = interpreter.line if isinstance(interpreter.line,int) else 0
+            error_str = prebuilt.errors.encode_xor_readable(error_str,lno)
+        print(error_str)
+
+        # raise
 
 # --- Test Script ---
 

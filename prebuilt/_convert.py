@@ -1,6 +1,6 @@
+# pyright: reportReturnType=false
 from types import FunctionType
 from typing import Type, get_origin, get_args,TypeVar
-
 T = TypeVar('T')
 
 def pythonic(value, target_type:Type[T],error_prefix="")->T:
@@ -78,39 +78,39 @@ def pythonic(value, target_type:Type[T],error_prefix="")->T:
     raise TypeError(f"{error_prefix}:Unsupported target type: {target_type}")
 
 
-def python_to_external(value, target_type):
+def python_to_external(value, original_type):
     """
     Convert a Python value into its restricted external representation.
     """
-    origin = get_origin(target_type)
-    args = get_args(target_type)
+    origin = get_origin(original_type)
+    args = get_args(original_type)
 
     # ---------- str ----------
     # str -> list[int]
-    if target_type is str:
+    if original_type is str:
         if not isinstance(value, str):
             raise TypeError("Expected str")
         return [ord(c) for c in value]
 
     # ---------- int ----------
-    if target_type is int:
+    if original_type is int:
         if not isinstance(value, int):
-            raise TypeError("Expected int")
+            raise TypeError(f"Expected int, got {type(value)}")
         return value
-    if target_type is FunctionType:
+    if original_type is FunctionType:
         if not isinstance(value, FunctionType):
             raise TypeError("Expected function")
         return value
 
     # ---------- bool ----------
-    if target_type is bool:
+    if original_type is bool:
         if not isinstance(value, bool):
             raise TypeError("Expected bool")
         return 1 if value else 0
 
     # ---------- float ----------
     # float -> [[digits], decimal_pos]
-    if target_type is float:
+    if original_type is float:
         if not isinstance(value, (int, float)):
             raise TypeError("Expected float")
 
@@ -129,7 +129,7 @@ def python_to_external(value, target_type):
     # ---------- list[T] ----------
     if origin is list and args:
         if not isinstance(value, list):
-            raise TypeError("Expected list")
+            raise TypeError(f"Expected list,got {type(value)}",value)
         inner = args[0]
         return [python_to_external(v, inner) for v in value]
 
@@ -143,8 +143,6 @@ def python_to_external(value, target_type):
         return list(l)
 
 
-    raise TypeError(f"Unsupported target type: {target_type} (origin={origin}, args={args})")
+    raise TypeError(f"Unsupported target type: {original_type} (origin={origin}, args={args})")
 
-# pythonic = pythonic
-# pythonic = pythonic
 ext = python_to_external

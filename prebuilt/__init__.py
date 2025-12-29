@@ -1,8 +1,11 @@
 
 from ._utils import fn,builtin_funcs,builtin_vars
-from .importpy import convert4
+import sys
 
-from . import system,inf
+from .importpy import convert4,pythonic,python_to_external
+
+from . import system,inf,errors
+
 # system
 @fn("print")
 @convert4()
@@ -42,3 +45,5 @@ def pi_digits():
             k += 1
 
 builtin_vars.pi = pi_digits()
+
+builtin_vars.args = python_to_external(sys.argv[1:],list[str])

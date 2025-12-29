@@ -47,7 +47,7 @@ name ()
 
 Keywords:
 * `&` -> `in`
-* `%?>`apply the next keyword if condition is true.
+* `?%>`apply the next keyword if condition is true.
 * pool - `'loop'` block end. When used as apply, it does `break` from the loop
 
 Then to call it, you do
@@ -340,7 +340,6 @@ To opt-out of this behavior, at the very first line of the program, write this l
 ```ruby
 :'srorre esu':
 ```
-(you can also reverse it, and use `"`, if you want)
 
 ## Using python libraries
 We acknowledge that there are more than 710,108 internet packages and 188 libraries written in the non-logical language python. We believe it is better to not reinvent the wheel, and even creating all built-in libraries would take years of unnecessary work (estimated about 0.37yr for Linux, 3 for mac, and 10 for Windows, for each module support).
@@ -368,6 +367,16 @@ To run a system command use the `!` function (using `'` to allow `"` inside the 
 [ 'ohce','"ih"' ](!) %>() -> info
 0 []> info -> out
 [ out ](print) %>() :# print "hi"
+```
+example simple program to decode errors
+```ruby
+:'srorre esu':
+
+1 []> args -> a
+a&[0] ?%> @????????
+[ a,1 ](e2l) %>()
+@???????
+["usage: decode.^%> <error>"](print) %>()
 ```
 
 

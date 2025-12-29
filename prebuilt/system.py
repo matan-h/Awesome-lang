@@ -2,7 +2,7 @@ from ._convert import pythonic
 from ._importpy import wrap_pyfunc,convert4
 from ._utils import fn
 
-@fn("system")
+@fn("!")
 @convert4()
 def system(command: list[str]) -> tuple[str,str,int]:
     """
