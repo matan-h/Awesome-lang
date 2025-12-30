@@ -5,6 +5,7 @@ import "core:mem"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "colors"
 import "core:unicode"
 import "core:unicode/utf8"
 
@@ -25,6 +26,7 @@ Value :: struct {
 	f_val: ^Function,
 	g_val: ^LazyGenerator,
 }
+
 MValues :: struct {
 	values: []Value,
 }
@@ -130,8 +132,21 @@ Lexer :: struct {
 }
 
 dump_node :: proc(n: ^Node, indent := 0) {
+
 	for i := 0; i < indent; i += 1 {fmt.print("  ")}
-	fmt.printf("%v (%v) name=%q int=%d\n", n.kind, n.token.type, n.name_val, n.int_val)
+
+	// fmt.printf("%v (%v) name=%q int=%d\n", n.kind, n.token.type, n.name_val, n.int_val)
+	colors.print(
+		colors.CYAN, itoa(int(n.kind)), colors.RESET,
+		" (",
+		colors.YELLOW, itoa(int(n.token.type)), colors.RESET,
+		") name=",
+		colors.GREEN, n.name_val, colors.RESET,
+		" int=",
+		colors.RED, itoa(n.int_val), colors.RESET,
+		"\n",
+	)
+
 
 	for c in n.children {
 		dump_node(c, indent + 1)
@@ -696,6 +711,8 @@ interp_init :: proc() -> Interpreter {
 // Values
 
 v_int :: proc(i: int) -> Value {return Value{type = .Integer, i_val = i}}
+
+
 v_list :: proc(v: []Value) -> Value {
 	d := make([dynamic]Value)
 	append(&d, ..v)
@@ -932,6 +949,9 @@ eval_binop :: proc(i: ^Interpreter, n: ^Node) -> Value {
 
 
 do_op :: proc(i: ^Interpreter, left: Value, op: string, right: Value) -> Value {
+	    // helpers
+
+
 	if op == "+" {
 		if left.type == .Integer && right.type == .Integer {return v_int(left.i_val + right.i_val)}
 		if left.type == .List && right.type == .List {
@@ -1184,6 +1204,8 @@ print_values :: proc(vs: []Value) {
 // --- Main ---
 
 main :: proc() {
+	colors.enable()
+
 	if len(os.args) < 2 {
 		fmt.println("Usage: awesome <file>")
 		return
