@@ -264,7 +264,7 @@ Not all infinities are the same, so we offer you a bunch of infinities to choose
 * `~7` Cryptographic Infinity, resolve to `2^256` on Windows, and `2^512` on Linux/mac
 * `~6` The full number of files on this disk. Dangerous! Using it might take a lot of time.
 * `~5` The amount of space left on this disk. Counted as MB
-* `~4` The amount of used left on this disk. Counted as MB
+* `~4` The amount of used space on this disk. Counted as MB
 * `~3` The current process PID.
 * `~2` The current number of stars in the observable universe, according to NASA.
 * `~1` Stay `~1` and negative no matter what.
@@ -304,22 +304,6 @@ If you write 7+n `-` after the name, you can read it `n` times
 
 In the example, we specify one read, so after the usage one time, we could read the actual program.txt, so it does not block the user.
 
-## builtins
-*functions:*
-* `($list$int) escape $int`/`epacse` - when you write a string, we don't expand `\n..` automatically, instead, use `epacse` function for that. Notice that if you pass `[5,13]` it will simply delete both, and return an empty array. That's because 13 is `\r`, which deletes the last character
-* `($list$int) l2i $int` - convert `[3,1,4,1,5,9,2]` into `3141592` number, so you can operate
-* `($int) i2l $list$int` - convert `3141592` back into list
-
-* `($list$int,$int) l2b $list$int` - base encode list, gets two parameters, list and base (e.g. 64)
-* `($list$int,$int) b2l $list$int` - base64 decode `list[int]`, gets two parameters, list and base (e.g. 64).
-* `($list,$int) limit $list` Return list from 0 until n. very useful for infinite lists (e.g. to get a list that's the first 10 of pi you simply call this function with (pi,10))
-* `($list,$int) timil $list` Return list with the n last elements removed, does not work on infinite lists.
-* `($list$int,$int) e2l $list$int` find the `n`st likely possible options for error (see later)
-* `($list$list$int) ! $list$list$int` - execute a system command, return three lists, first is stdout,second is stderr, the third contain only the status code
-
-*vars:*
-* `pi $list$int` - in Awesome, we don't believe float numbers should exist (they do not make sense, all you need is ints). Therefore, `pi` is simply an infinite list of pi digits. the float of `pi` is `[[pi],1]` to specify the first digit is before the `.`
-* `args $list$list$int`: Command line arguments. Each argument as its own list.
 
 ## Errors
 by default, the language assumes you are in production, so it will display errors, while trying to take as little space as possible. So to save space, the error is XOR-ed (while forcing it to be readable) with the line number. For example, here is the error message `NameError: Function 'fib' not defined.` at line 1
@@ -379,6 +363,8 @@ a&[0] ?%> @????????
 ["usage: decode.^%> <error>"](print) %>()
 ```
 
+## builtins
+see [builtins](/builtins.csv)
 
 ## Inspired by
 * Dreamberd, for the mutable numbers, and the idea.
